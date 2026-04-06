@@ -45,6 +45,7 @@ This script is a **true rule-based engine**, with safety, metadata integrity, an
 | Clean, color‑coded summary output | ✔ | ✖ |
 | Safe fallback rules | ✔ | ✖ |
 | Consistent output naming | ✔ | ✖ |
+| Keeps original audio tracks | ✖ (always processes audio) | ✔ (often keeps originals) |
 
 ## Why DD+?
 
