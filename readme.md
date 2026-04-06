@@ -95,7 +95,7 @@ If something doesn't match any rule, it falls back to sensible defaults.
 
 You can easily tweak these in the script:
 - `$CommentaryKeywords` — Add or remove words that trigger removal
-- The `$AudioRules` array — Adjust bitrates, add new passthroughs, or change behavior
+- **Audio rule groups** (`$Rules_AAC`, `$Rules_DTS`, etc.) — Adjust bitrates, add new codecs, or change behavior for each codec family.
 - `$ThreadCount` - Performance Tuning. The script defaults to 8 threads for processing. If you have a high-end CPU, you can adjust the $ThreadCount variable from 4 to 16.
 
 ## Disclaimer
