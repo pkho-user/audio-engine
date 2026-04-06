@@ -36,6 +36,7 @@ This script is a **true rule-based engine**, with safety, metadata integrity, an
 | DTS‑HD MA/HRA detection | ✔ | ✖ |
 | Malformed layout guards (AAC/EAC3) | ✔ | ✖ |
 | 7.1 → 5.1 intelligent downmixing | ✔ | Partial |
+| 5.1 sources preserved as 5.1 (re‑encoded only) | ✔ | ✖ |
 | Clean metadata preservation | ✔ | Partial |
 | Language tag preservation | ✔ | ✖ |
 | Subtitle & chapter passthrough | ✔ | Partial |
