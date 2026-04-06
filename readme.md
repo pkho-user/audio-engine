@@ -18,6 +18,31 @@ Optimized for **FFmpeg 8.1** and **PowerShell 5.1 / 7.x**. Designed for home the
 - Consistent encoding — Everything else becomes EAC3 5.1 or 2.0 at reasonable bitrates (256k / 768k / 1024k).
 - Clean metadata — Adds language tags, bitrate info, and sensible titles. First audio track is set as default.
 - Safe & predictable — Preserves video, subtitles, and chapters.
+  
+## Comparison — This Engine vs. Typical FFmpeg/PowerShell Scripts
+
+Most FFmpeg audio-processing scripts online are simple one-off utilities.  
+This project is designed as a **true rule-based engine**, with safety, metadata integrity, and predictable behavior as core goals.
+
+| Feature / Capability | This Engine | Typical GitHub Scripts |
+|----------------------|-------------|-------------------------|
+| Rule‑based audio engine | ✔ | ✖ |
+| Precompiled regex for performance | ✔ | ✖ |
+| Commentary detection & removal | ✔ | ✖ |
+| TrueHD 5.1 passthrough | ✔ | ✖ (often re‑encodes) |
+| EAC3 Atmos (JOC) passthrough | ✔ | ✖ |
+| DTS‑HD MA/HRA detection | ✔ | ✖ |
+| Malformed layout guards (AAC/EAC3) | ✔ | ✖ |
+| 7.1 → 5.1 intelligent downmixing | ✔ | Partial |
+| Clean metadata preservation | ✔ | Partial |
+| Language tag preservation | ✔ | ✖ |
+| Subtitle & chapter passthrough | ✔ | Partial |
+| No video re‑encode | ✔ | Sometimes broken |
+| Batch mode (folder processing) | ✔ | Sometimes |
+| Modular architecture | ✔ | ✖ |
+| Clean, color‑coded summary output | ✔ | ✖ |
+| Safe fallback rules | ✔ | ✖ |
+| Consistent output naming | ✔ | ✖ |
 
 ## Why DD+?
 
