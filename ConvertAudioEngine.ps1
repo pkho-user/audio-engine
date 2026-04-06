@@ -1,8 +1,9 @@
 # =====================================================================
-#  ConvertAudioEngine.ps1 — ENGINE MODE REFACTOR (Version 1.v.b RC)
+#  ConvertAudioEngine.ps1 — ENGINE MODE REFACTOR (Version 1.v.c RC)
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
-#  Modular Engine Architecture
+#  Modular Codec Groups → Replaced Monolithic Rule Array
+#  Rule table reorganized by codec family
 #  Downmix is only used for sources with more than 5.1 channels.
 #  Audio 5.1 sources are only re‑encoded.
 # =====================================================================
@@ -19,82 +20,94 @@ $ThreadCount = 8    # User‑adjustable (4–16). Audio doesn’t gain speed fro
 $CommentaryKeywords = @("commentary","director","producer","writer","cast","behind","bonus","alt","interview")
 
 # =====================================================================
-#  ENGINE: RULE TABLE (WITH REQUIRED PROPERTIES)
+#  ENGINE: AUDIO RULE GROUPS (BY CODEC FAMILY)
+#  Goal: Adding new codecs is easy, rule table stays readable.
 # =====================================================================
-$AudioRules = @(
-    # Atmos Passthrough
-    [PSCustomObject]@{
-        CodecRegex="^(eac3)$"; Channels=$null; ProfileRegex="JOC|Atmos"
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="EAC3_Atmos_Passthrough"
-        Rule="EAC3_Atmos_Passthrough"
-        CodecRegexObj=$null; ProfileRegexObj=$null
-    },
 
-    # TrueHD 5.1 Passthrough
-    [PSCustomObject]@{
-        CodecRegex="^(mlp|truehd|true-hd)$"; Channels=6; ProfileRegex=$null
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="TrueHD_5.1_Passthrough"
-        Rule="TrueHD_5.1_Passthrough"
-        CodecRegexObj=$null; ProfileRegexObj=$null
-    },
-
-    # TrueHD 7.1 Downmix
-    [PSCustomObject]@{
-        CodecRegex="^(mlp|truehd|true-hd)$"; Channels=8; ProfileRegex=$null
-        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null
-        Rule="TrueHD_7.1_Downmix_1024k"
-        CodecRegexObj=$null; ProfileRegexObj=$null
-    },
-
-    # DTS 2.0
-    [PSCustomObject]@{
-        CodecRegex="^(dts)$"; Channels=2; ProfileRegex=$null
-        Action="Encode"; Bitrate="256k"; PassthroughTag=$null
-        Rule="DTS_2.0_Encode_256k"
-        CodecRegexObj=$null; ProfileRegexObj=$null
-    },
-
-    # DTS-HD Multichannel
-    [PSCustomObject]@{
-        CodecRegex="^(dts)$"; Channels={ param($c) $c -gt 2 }; ProfileRegex="HD|MA|HRA"
-        Action="Encode"; Bitrate="1024k"; PassthroughTag=$null
-        Rule="DTSHD_Multichannel_Encode_1024k"
-        CodecRegexObj=$null; ProfileRegexObj=$null
-    },
-
-    # DTS Multichannel
-    [PSCustomObject]@{
-        CodecRegex="^(dts)$"; Channels={ param($c) $c -gt 2 }; ProfileRegex=$null
-        Action="Encode"; Bitrate="768k"; PassthroughTag=$null
-        Rule="DTS_Multichannel_Encode_768k"
-        CodecRegexObj=$null; ProfileRegexObj=$null
-    },
-
-    # AAC 7.1
+# AAC FAMILY
+# - AAC 7.1 → Downmix to 5.1 @ 1024k
+# - AAC 5.1 → Encode @ 768k
+# - AAC 2.0 → Encode @ 256k
+$Rules_AAC = @(
     [PSCustomObject]@{
         CodecRegex="^(aac)$"; Channels=8; ProfileRegex=$null
         Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null
         Rule="AAC_7.1_Downmix_1024k"
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
-
-    # AAC 5.1
     [PSCustomObject]@{
         CodecRegex="^(aac)$"; Channels=6; ProfileRegex=$null
         Action="Encode"; Bitrate="768k"; PassthroughTag=$null
         Rule="AAC_5.1_Encode_768k"
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
-
-    # AAC 2.0
     [PSCustomObject]@{
         CodecRegex="^(aac)$"; Channels=2; ProfileRegex=$null
         Action="Encode"; Bitrate="256k"; PassthroughTag=$null
         Rule="AAC_2.0_Encode_256k"
         CodecRegexObj=$null; ProfileRegexObj=$null
-    },
+    }
+)
 
-    # PCM / FLAC / Float PCM
+# EAC3 / ATMOS FAMILY
+# - Atmos (EAC3 JOC) → Passthrough
+$Rules_EAC3_Atmos = @(
+    [PSCustomObject]@{
+        CodecRegex="^(eac3)$"; Channels=$null; ProfileRegex="JOC|Atmos"
+        Action="Passthrough"; Bitrate=$null; PassthroughTag="EAC3_Atmos_Passthrough"
+        Rule="EAC3_Atmos_Passthrough"
+        CodecRegexObj=$null; ProfileRegexObj=$null
+    }
+)
+
+# TRUEHD FAMILY
+# - TrueHD 5.1 → Passthrough
+# - TrueHD 7.1 → Downmix to 5.1 @ 1024k
+$Rules_TrueHD = @(
+    [PSCustomObject]@{
+        CodecRegex="^(mlp|truehd|true-hd)$"; Channels=6; ProfileRegex=$null
+        Action="Passthrough"; Bitrate=$null; PassthroughTag="TrueHD_5.1_Passthrough"
+        Rule="TrueHD_5.1_Passthrough"
+        CodecRegexObj=$null; ProfileRegexObj=$null
+    },
+    [PSCustomObject]@{
+        CodecRegex="^(mlp|truehd|true-hd)$"; Channels=8; ProfileRegex=$null
+        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null
+        Rule="TrueHD_7.1_Downmix_1024k"
+        CodecRegexObj=$null; ProfileRegexObj=$null
+    }
+)
+
+# DTS FAMILY (Core, MA, HRA)
+# - Stereo DTS → Encode 256k
+# - Multichannel DTS → Encode 768k
+# - DTS-HD MA/HRA → Encode 1024k
+$Rules_DTS = @(
+    [PSCustomObject]@{
+        CodecRegex="^(dts)$"; Channels=2; ProfileRegex=$null
+        Action="Encode"; Bitrate="256k"; PassthroughTag=$null
+        Rule="DTS_2.0_Encode_256k"
+        CodecRegexObj=$null; ProfileRegexObj=$null
+    },
+    [PSCustomObject]@{
+        CodecRegex="^(dts)$"; Channels={ param($c) $c -gt 2 }; ProfileRegex="HD|MA|HRA"
+        Action="Encode"; Bitrate="1024k"; PassthroughTag=$null
+        Rule="DTSHD_Multichannel_Encode_1024k"
+        CodecRegexObj=$null; ProfileRegexObj=$null
+    },
+    [PSCustomObject]@{
+        CodecRegex="^(dts)$"; Channels={ param($c) $c -gt 2 }; ProfileRegex=$null
+        Action="Encode"; Bitrate="768k"; PassthroughTag=$null
+        Rule="DTS_Multichannel_Encode_768k"
+        CodecRegexObj=$null; ProfileRegexObj=$null
+    }
+)
+
+# PCM / FLAC FAMILY
+# - 7.1 → Downmix to 5.1 @ 1024k
+# - 5.1 → Encode @ 768k
+# - 2.0 → Encode @ 256k
+$Rules_PCMFLAC = @(
     [PSCustomObject]@{
         CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=8
         ProfileRegex=$null; Action="Downmix"; Bitrate="1024k"
@@ -113,6 +126,18 @@ $AudioRules = @(
         PassthroughTag=$null; Rule="PCMFLAC_2.0_Encode_256k"
         CodecRegexObj=$null; ProfileRegexObj=$null
     }
+)
+
+# =====================================================================
+#  ENGINE: MERGE ALL AUDIO RULE GROUPS
+#  (Adding a new codec = define $Rules_XYZ, then append here)
+# =====================================================================
+$AudioRules = @(
+    $Rules_EAC3_Atmos +
+    $Rules_TrueHD +
+    $Rules_DTS +
+    $Rules_AAC +
+    $Rules_PCMFLAC
 )
 
 # =====================================================================
@@ -239,17 +264,17 @@ function Process-AudioTracks {
         $match = Resolve-AudioRule -Codec $Codec -Channels $Channels -Profile $Profile -Title $Title -Handler $Handler
 
         if ($match) {
-            $Action = $match.Action
-            $Bitrate = $match.Bitrate
+            $Action      = $match.Action
+            $Bitrate     = $match.Bitrate
             $Passthrough = ($Action -eq "Passthrough")
-            $Downmix = ($Action -eq "Downmix")
-            $Tag = $match.PassthroughTag
-            $Rule = $match.Rule
+            $Downmix     = ($Action -eq "Downmix")
+            $Tag         = $match.PassthroughTag
+            if (-not $Rule) { $Rule = $match.Rule }
         }
         else {
-            if ($Channels -le 2) { $Action="Encode"; $Bitrate="256k"; $Rule="Fallback_2.0_256k" }
-            elseif ($Channels -gt 6) { $Action="Encode"; $Bitrate="1024k"; $Rule="Fallback_7.1_1024k" }
-            else { $Action="Encode"; $Bitrate="768k"; $Rule="Fallback_5.1_768k" }
+            if ($Channels -le 2)      { $Action="Encode"; $Bitrate="256k";  $Rule="Fallback_2.0_256k" }
+            elseif ($Channels -gt 6)  { $Action="Encode"; $Bitrate="1024k"; $Rule="Fallback_7.1_1024k" }
+            else                      { $Action="Encode"; $Bitrate="768k";  $Rule="Fallback_5.1_768k" }
             $Passthrough=$false; $Downmix=$false; $Tag=$null
         }
 
@@ -257,10 +282,10 @@ function Process-AudioTracks {
         if ($Codec -eq "dts" -and $Channels -gt 2) {
             if ($IsDTSHD) {
                 $Bitrate = "1024k"
-                $Rule = "DTSHD_Multichannel_Encode_1024k"
+                $Rule    = "DTSHD_Multichannel_Encode_1024k"
             } else {
                 $Bitrate = "768k"
-                $Rule = "DTS_Multichannel_Encode_768k"
+                $Rule    = "DTS_Multichannel_Encode_768k"
             }
         }
 
@@ -397,7 +422,7 @@ foreach ($t in $tracks) {
 
     # Color selection
     $Color = switch ($t.Action) {
-	"Passthrough" { "Green" }      # Keep green for passthrough (good news)
+        "Passthrough" { "Green" }      # Keep green for passthrough (good news)
         "Downmix"     { "Yellow" }     # Keep yellow for downmix (warning-ish)
         "Encode"      { "Cyan" }       # Cyan for encoding (main action)
         "Removed"     { "Red" }        # Red for removed (important)
