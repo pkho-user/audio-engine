@@ -3,6 +3,8 @@
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
 #  Modular Engine Architecture
+#  Downmix is only used for sources with more than 5.1 channels.
+#  Audio 5.1 sources are only re‑encoded.
 # =====================================================================
 
 param(
