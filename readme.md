@@ -1,7 +1,8 @@
 # Audio Converter Engine (DD+ 5.1 Focused)
 
 > **Downmix is only used for sources with more than 5.1 channels.  
-> Audio 5.1 sources are only re‑encoded.**
+> Audio 5.1 sources are only re‑encoded.  
+> No video re‑encode — video is always passed through untouched.**
 
 A PowerShell script that processes MKV files with FFmpeg to clean up and standardize the audio tracks.
 
@@ -37,10 +38,10 @@ This script is a **true rule-based engine**, with safety, metadata integrity, an
 | Malformed layout guards (AAC/EAC3) | ✔ | ✖ |
 | 7.1 → 5.1 intelligent downmixing | ✔ | Partial |
 | 5.1 sources preserved as 5.1 (re‑encoded only) | ✔ | ✖ |
+| No video re‑encode | ✔ | Sometimes broken |
 | Clean metadata preservation | ✔ | Partial |
 | Language tag preservation | ✔ | ✖ |
 | Subtitle & chapter passthrough | ✔ | Partial |
-| No video re‑encode | ✔ | Sometimes broken |
 | Batch mode (folder processing) | ✖ | Sometimes |
 | Modular architecture | ✔ | ✖ |
 | Clean, color‑coded summary output | ✔ | ✖ |
