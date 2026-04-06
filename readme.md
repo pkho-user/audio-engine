@@ -1,5 +1,8 @@
 # Audio Converter Engine (DD+ 5.1 Focused)
 
+> **Downmix is only used for sources with more than 5.1 channels.  
+> Audio 5.1 sources are only re‑encoded.**
+
 A PowerShell script that processes MKV files with FFmpeg to clean up and standardize the audio tracks.
 
 It automatically:
@@ -21,8 +24,7 @@ Optimized for **FFmpeg 8.1** and **PowerShell 5.1 / 7.x**. Designed for home the
   
 ## Comparison — This Engine vs. Typical FFmpeg/PowerShell Scripts
 
-Most FFmpeg audio-processing scripts online are simple one-off utilities.  
-This project is designed as a **true rule-based engine**, with safety, metadata integrity, and predictable behavior as core goals.
+This script is a **true rule-based engine**, with safety, metadata integrity, and predictable behavior as core goals.
 
 | Feature / Capability | This Engine | Typical GitHub Scripts |
 |----------------------|-------------|-------------------------|
