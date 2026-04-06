@@ -38,7 +38,7 @@ This project is designed as a **true rule-based engine**, with safety, metadata 
 | Language tag preservation | ✔ | ✖ |
 | Subtitle & chapter passthrough | ✔ | Partial |
 | No video re‑encode | ✔ | Sometimes broken |
-| Batch mode (folder processing) | ✔ | Sometimes |
+| Batch mode (folder processing) | ✖ | Sometimes |
 | Modular architecture | ✔ | ✖ |
 | Clean, color‑coded summary output | ✔ | ✖ |
 | Safe fallback rules | ✔ | ✖ |
