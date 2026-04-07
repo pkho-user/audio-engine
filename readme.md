@@ -48,6 +48,8 @@ This script is a **true rule-based engine**, with safety, metadata integrity, an
 | Safe fallback rules | ✔ | ✖ |
 | Consistent output naming | ✔ | ✖ |
 | Keeps original audio tracks | ✖ (always processes audio) | ✔ (often keeps originals) |
+| Adjustable audio bitrates      | ✔ | ✖ |
+| Add new codecs easily          | ✔ | ✖ |
 
 ## Why DD+?
 
