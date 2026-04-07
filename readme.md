@@ -49,7 +49,7 @@ This script is a **true rule-based engine**, with safety, metadata integrity, an
 | Consistent output naming | ✔ | ✖ |
 | Keeps original audio tracks | ✖ (always processes audio) | ✔ (often keeps originals) |
 | Adjustable audio bitrates      | ✔ | ✖ |
-| Add new codecs easily          | ✔ | ✖ |
+| Add new Audio codecs easily          | ✔ | ✖ |
 
 ## Why DD+?
 
@@ -109,8 +109,7 @@ Feel free to open issues or submit pull requests if you find bugs or want to add
 
 ## Planned Improvements
 
-- Config file (JSON) for bitrates and rules
 - Batch/folder processing mode
 - Better logging and verbose output
-- Turn it into a proper PowerShell module
+- Keep all 7.1 Audio Tracks
 
