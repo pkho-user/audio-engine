@@ -90,8 +90,17 @@ The script uses a simple rule-based system:
 | AAC / PCM / FLAC         | 5.1      | Encode                          | EAC3 5.1 @ 768k                 |
 | Any stereo               | 2.0      | Encode                          | EAC3 2.0 @ 256k                 |
 | Stereo + commentary title| 2.0      | Remove                          | —                               |
-
 If something doesn't match any rule, it falls back to sensible defaults.
+
+## Dolby Metadata Behavior (Per Track Type)
+
+This engine applies Dolby‑safe metadata parameters depending on the output channel layout.
+| Track Type            | dialnorm | dsur_mode |
+|-----------------------|----------|-----------|
+| **Stereo (2.0)**      | ✔        | ✔         |
+| **5.1 Encode**        | ✔        | ✔         |
+| **Downmix (7.1→5.1)** | ✔        | ✔         |
+| **Passthrough**       | ❌        | ❌         |
 
 ## Customization
 
