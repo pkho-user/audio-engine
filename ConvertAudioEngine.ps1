@@ -1,11 +1,12 @@
 # =====================================================================
-#  ConvertAudioEngine.ps1 — ENGINE MODE REFACTOR (Version 1.v.c RC)
+#  ConvertAudioEngine.ps1 — ENGINE MODE REFACTOR (Version 1.v.d RC)
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
-#  Modular Codec Groups
+#  Modular Codec Groups → Replaced Monolithic Rule Array
 #  Rule table reorganized by codec family
 #  Downmix is only used for sources with more than 5.1 channels.
 #  Audio 5.1 sources are only re‑encoded.
+#  Added Priority Mapping (default 0-100)
 # =====================================================================
 
 param(
@@ -16,8 +17,13 @@ param(
 # =====================================================================
 #  ENGINE: GLOBAL SETTINGS
 # =====================================================================
-$ThreadCount = 8    # User‑adjustable (4–16). Audio doesn’t gain speed from more threads.
+$ThreadCount = 8    # User‑adjustable (4–16). Audio doesn't gain speed from more threads.
 $CommentaryKeywords = @("commentary","director","producer","writer","cast","behind","bonus","alt","interview")
+
+# Resolve ffprobe/ffmpeg relative to the script's own directory
+# instead of the directory the user ran the script from.
+$ffprobe = Join-Path $PSScriptRoot "ffprobe.exe"
+$ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
 
 # =====================================================================
 #  ENGINE: AUDIO RULE GROUPS (BY CODEC FAMILY)
@@ -31,20 +37,20 @@ $CommentaryKeywords = @("commentary","director","producer","writer","cast","behi
 $Rules_AAC = @(
     [PSCustomObject]@{
         CodecRegex="^(aac)$"; Channels=8; ProfileRegex=$null
-        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null
-        Rule="AAC_7.1_Downmix_1024k"
+        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null; Tag=$null
+        Rule="AAC_7.1_Downmix_1024k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
     [PSCustomObject]@{
         CodecRegex="^(aac)$"; Channels=6; ProfileRegex=$null
-        Action="Encode"; Bitrate="768k"; PassthroughTag=$null
-        Rule="AAC_5.1_Encode_768k"
+        Action="Encode"; Bitrate="768k"; PassthroughTag=$null; Tag=$null
+        Rule="AAC_5.1_Encode_768k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
     [PSCustomObject]@{
         CodecRegex="^(aac)$"; Channels=2; ProfileRegex=$null
-        Action="Encode"; Bitrate="256k"; PassthroughTag=$null
-        Rule="AAC_2.0_Encode_256k"
+        Action="Encode"; Bitrate="256k"; PassthroughTag=$null; Tag=$null
+        Rule="AAC_2.0_Encode_256k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     }
 )
@@ -54,8 +60,8 @@ $Rules_AAC = @(
 $Rules_EAC3_Atmos = @(
     [PSCustomObject]@{
         CodecRegex="^(eac3)$"; Channels=$null; ProfileRegex="JOC|Atmos"
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="EAC3_Atmos_Passthrough"
-        Rule="EAC3_Atmos_Passthrough"
+        Action="Passthrough"; Bitrate=$null; PassthroughTag="EAC3_Atmos_Passthrough"; Tag=$null
+        Rule="EAC3_Atmos_Passthrough"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     }
 )
@@ -66,14 +72,14 @@ $Rules_EAC3_Atmos = @(
 $Rules_TrueHD = @(
     [PSCustomObject]@{
         CodecRegex="^(mlp|truehd|true-hd)$"; Channels=6; ProfileRegex=$null
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="TrueHD_5.1_Passthrough"
-        Rule="TrueHD_5.1_Passthrough"
+        Action="Passthrough"; Bitrate=$null; PassthroughTag="TrueHD_5.1_Passthrough"; Tag=$null
+        Rule="TrueHD_5.1_Passthrough"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
     [PSCustomObject]@{
         CodecRegex="^(mlp|truehd|true-hd)$"; Channels=8; ProfileRegex=$null
-        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null
-        Rule="TrueHD_7.1_Downmix_1024k"
+        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null; Tag=$null
+        Rule="TrueHD_7.1_Downmix_1024k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     }
 )
@@ -85,20 +91,20 @@ $Rules_TrueHD = @(
 $Rules_DTS = @(
     [PSCustomObject]@{
         CodecRegex="^(dts)$"; Channels=2; ProfileRegex=$null
-        Action="Encode"; Bitrate="256k"; PassthroughTag=$null
-        Rule="DTS_2.0_Encode_256k"
+        Action="Encode"; Bitrate="256k"; PassthroughTag=$null; Tag=$null
+        Rule="DTS_2.0_Encode_256k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
     [PSCustomObject]@{
         CodecRegex="^(dts)$"; Channels={ param($c) $c -gt 2 }; ProfileRegex="HD|MA|HRA"
-        Action="Encode"; Bitrate="1024k"; PassthroughTag=$null
-        Rule="DTSHD_Multichannel_Encode_1024k"
+        Action="Encode"; Bitrate="1024k"; PassthroughTag=$null; Tag="DTSHD"
+        Rule="DTSHD_Multichannel_Encode_1024k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
     [PSCustomObject]@{
         CodecRegex="^(dts)$"; Channels={ param($c) $c -gt 2 }; ProfileRegex=$null
-        Action="Encode"; Bitrate="768k"; PassthroughTag=$null
-        Rule="DTS_Multichannel_Encode_768k"
+        Action="Encode"; Bitrate="768k"; PassthroughTag=$null; Tag=$null
+        Rule="DTS_Multichannel_Encode_768k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     }
 )
@@ -111,19 +117,19 @@ $Rules_PCMFLAC = @(
     [PSCustomObject]@{
         CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=8
         ProfileRegex=$null; Action="Downmix"; Bitrate="1024k"
-        PassthroughTag=$null; Rule="PCMFLAC_7.1_Downmix_1024k"
+        PassthroughTag=$null; Tag=$null; Rule="PCMFLAC_7.1_Downmix_1024k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
     [PSCustomObject]@{
         CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=6
         ProfileRegex=$null; Action="Encode"; Bitrate="768k"
-        PassthroughTag=$null; Rule="PCMFLAC_5.1_Encode_768k"
+        PassthroughTag=$null; Tag=$null; Rule="PCMFLAC_5.1_Encode_768k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     },
     [PSCustomObject]@{
         CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=2
         ProfileRegex=$null; Action="Encode"; Bitrate="256k"
-        PassthroughTag=$null; Rule="PCMFLAC_2.0_Encode_256k"
+        PassthroughTag=$null; Tag=$null; Rule="PCMFLAC_2.0_Encode_256k"; Priority=0
         CodecRegexObj=$null; ProfileRegexObj=$null
     }
 )
@@ -132,13 +138,19 @@ $Rules_PCMFLAC = @(
 #  ENGINE: MERGE ALL AUDIO RULE GROUPS
 #  (Adding a new codec = define $Rules_XYZ, then append here)
 # =====================================================================
-$AudioRules = @(
-    $Rules_EAC3_Atmos +
-    $Rules_TrueHD +
-    $Rules_DTS +
-    $Rules_AAC +
-    $Rules_PCMFLAC
-)
+$AudioRules = $Rules_EAC3_Atmos + $Rules_TrueHD + $Rules_DTS + $Rules_AAC + $Rules_PCMFLAC
+
+# =====================================================================
+#  ENGINE: PRIORITY SORT
+#  Rules are sorted by Priority descending before matching begins.
+#  Ties preserve original definition order (stable sort via index).
+#  Default priority is 0. Set a rule's Priority higher (e.g. 50, 100)
+#  to make it win over other rules that would also match the same track.
+# =====================================================================
+$AudioRules = $AudioRules |
+    ForEach-Object { $i = 0 } { [PSCustomObject]@{ Rule=$_; Index=$i++ } } |
+    Sort-Object { $_.Rule.Priority } -Descending |
+    ForEach-Object { $_.Rule }
 
 # =====================================================================
 #  ENGINE: PRECOMPILE REGEX
@@ -159,7 +171,8 @@ function Get-AudioStreams {
         "-show_streams","-select_streams","a",$File
     )
 
-    $raw = .\ffprobe.exe @probeArgs 2>$null
+    # Use $script:ffprobe resolved from $PSScriptRoot (set at top of script)
+    $raw = & $script:ffprobe @probeArgs 2>$null
     try { return ($raw | ConvertFrom-Json).streams }
     catch {
         Write-Host "Failed to parse ffprobe JSON." -ForegroundColor Red
@@ -236,6 +249,11 @@ function Process-AudioTracks {
 
         $RealIndex = $s.index
 
+        # Reset $Rule at the start of every iteration so it does
+        # not bleed the previous track's value into the current one
+        # when neither malformed-layout guard fires.
+        $Rule = $null
+
         # --- Malformed Layout Guards  ---
         if ($Codec -eq "aac" -and $Channels -gt 6 -and $Channels -lt 8) {
             $Channels = 6
@@ -248,7 +266,8 @@ function Process-AudioTracks {
         }
 
         # Detect DTS-HD variants (MA/HRA)
-        $IsDTSHD = ($Codec -eq "dts" -and $Profile -and ($Profile -match "HD|MA|HRA"))
+        # Removed: $IsDTSHD local detection — Tag="DTSHD" in the rule table is now
+        # the single source of truth. The override block below reads $match.Tag instead.
 
         # Remove stereo commentary tracks
         if (Test-IsCommentary -Channels $Channels -Title $Title) {
@@ -269,18 +288,25 @@ function Process-AudioTracks {
             $Passthrough = ($Action -eq "Passthrough")
             $Downmix     = ($Action -eq "Downmix")
             $Tag         = $match.PassthroughTag
+            $Priority    = $match.Priority
             if (-not $Rule) { $Rule = $match.Rule }
         }
         else {
             if ($Channels -le 2)      { $Action="Encode"; $Bitrate="256k";  $Rule="Fallback_2.0_256k" }
             elseif ($Channels -gt 6)  { $Action="Encode"; $Bitrate="1024k"; $Rule="Fallback_7.1_1024k" }
             else                      { $Action="Encode"; $Bitrate="768k";  $Rule="Fallback_5.1_768k" }
-            $Passthrough=$false; $Downmix=$false; $Tag=$null
+            $Passthrough=$false; $Downmix=$false; $Tag=$null; $Priority=0
         }
 
         # --- DTS-HD Bitrate Override  ---
-        if ($Codec -eq "dts" -and $Channels -gt 2) {
-            if ($IsDTSHD) {
+        # Guard with -not $Passthrough so this block cannot
+        # accidentally overwrite the bitrate/rule of a future
+        # TS passthrough rule if one is ever added.
+        # Unified: $IsDTSHD removed — detection now comes from Tag="DTSHD"
+        # set directly in the rule table (single source of truth).
+        # $match guard ensures this never fires on fallback paths.
+        if ($match -and $Codec -eq "dts" -and $Channels -gt 2 -and -not $Passthrough) {
+            if ($match.Tag -eq "DTSHD") {
                 $Bitrate = "1024k"
                 $Rule    = "DTSHD_Multichannel_Encode_1024k"
             } else {
@@ -301,7 +327,7 @@ function Process-AudioTracks {
             Index=$TrackIndex; RealIndex=$RealIndex; Codec=$Codec; Channels=$Channels
             Profile=$Profile; Title=$Title; Language=$Lang; Action=$Action
             Passthrough=$Passthrough; Downmix=$Downmix; Bitrate=$Bitrate
-            PassthroughTag=$Tag; Output=""; Rule=$Rule
+            PassthroughTag=$Tag; Output=""; Rule=$Rule; Priority=$Priority
         }
 
         $TrackIndex++
@@ -316,8 +342,10 @@ function Process-AudioTracks {
 function Build-FFmpegCommand {
     param($Tracks, $InputFile, $ThreadCount)
 
-    $args = New-Object System.Collections.Generic.List[string]
-    $args.AddRange([string[]](
+    # Renamed from $args to $ffArgs.
+    # $args is a reserved PowerShell automatic variable; assigning
+    $ffArgs = New-Object System.Collections.Generic.List[string]
+    $ffArgs.AddRange([string[]](
         "-threads",$ThreadCount,
         "-err_detect","ignore_err",
         "-avioflags","direct",
@@ -333,18 +361,18 @@ function Build-FFmpegCommand {
     foreach ($t in $Tracks) {
         if ($t.Action -eq "Removed") { continue }
 
-        $args.AddRange([string[]]("-map","0:$($t.RealIndex)"))
+        $ffArgs.AddRange([string[]]("-map","0:$($t.RealIndex)"))
         $LangTag = " [$($t.Language)]"
 
         if ($t.Passthrough) {
-            $args.AddRange([string[]](
+            $ffArgs.AddRange([string[]](
                 "-c:a:$i","copy",
                 "-metadata:s:a:$i","title=$($t.PassthroughTag)$LangTag"
             ))
             $t.Output = "$($t.PassthroughTag)$LangTag"
         }
         elseif ($t.Downmix) {
-            $args.AddRange([string[]](
+            $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
                 "-ac","6",
                 "-b:a:$i",$t.Bitrate,
@@ -354,7 +382,9 @@ function Build-FFmpegCommand {
             $t.Output = "DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
         }
         elseif ($t.Channels -le 2) {
-            $args.AddRange([string[]](
+            # Note: -cutoff is intentionally omitted for stereo encode;
+            #       high-frequency limiting is only needed for multichannel downmixes.
+            $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
                 "-ac","2",
                 "-b:a:$i",$t.Bitrate,
@@ -363,7 +393,7 @@ function Build-FFmpegCommand {
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
         }
         else {
-            $args.AddRange([string[]](
+            $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
                 "-ac","6",
                 "-b:a:$i",$t.Bitrate,
@@ -374,19 +404,19 @@ function Build-FFmpegCommand {
         }
 
         # Language metadata
-        $args.AddRange([string[]]("-metadata:s:a:$i","language=$($t.Language)"))
+        $ffArgs.AddRange([string[]]("-metadata:s:a:$i","language=$($t.Language)"))
 
         # Disposition
         $disp = if ($i -eq 0) { "default" } else { "0" }
-        $args.AddRange([string[]]("-disposition:a:$i",$disp))
+        $ffArgs.AddRange([string[]]("-disposition:a:$i",$disp))
 
         $i++
     }
 
-    $args.AddRange([string[]]("-map","0:s?","-c:s","copy"))
-    $args.Add("$([System.IO.Path]::GetFileNameWithoutExtension($InputFile))_Processed.mkv")
+    $ffArgs.AddRange([string[]]("-map","0:s?","-c:s","copy"))
+    $ffArgs.Add("$([System.IO.Path]::GetFileNameWithoutExtension($InputFile))_Processed.mkv")
 
-    return $args
+    return $ffArgs
 }
 
 # =====================================================================
@@ -401,7 +431,8 @@ $tracks = Process-AudioTracks -Streams $streams
 Write-Host "=== Building FFmpeg Command ===" -ForegroundColor Cyan
 $cmd = Build-FFmpegCommand -Tracks $tracks -InputFile $InputFile -ThreadCount $ThreadCount
 
-.\ffmpeg.exe @cmd
+# Use $ffmpeg resolved from $PSScriptRoot instead of .\ffmpeg.exe
+& $ffmpeg @cmd
 
 # =====================================================================
 #  SUMMARY ENGINE
@@ -412,8 +443,8 @@ Write-Host "==================== AUDIO PROCESSING SUMMARY ====================" 
 Write-Host ""
 
 # Header
-$header = "{0,-4} {1,-8} {2,-5} {3,-16} {4,-40} {5}" -f `
-    "Idx","Codec","Ch","Action","Output","Rule"
+$header = "{0,-4} {1,-8} {2,-5} {3,-16} {4,-40} {5,-5} {6}" -f `
+    "Idx","Codec","Ch","Action","Output","Pri","Rule"
 
 Write-Host $header -ForegroundColor White
 Write-Host ("-" * $header.Length) -ForegroundColor DarkGray
@@ -446,9 +477,12 @@ foreach ($t in $tracks) {
     # Build output label
     $OutputLabel = if ($t.Output) { $t.Output } else { "(none)" }
 
+    # Priority label — show dash for removed/fallback tracks (priority not applicable)
+    $PriLabel = if ($t.Action -eq "Removed") { "-" } else { $t.Priority }
+
     # Final formatted line
-    $line = "{0,-4} {1,-8} {2,-5} {3,-16} {4,-40} {5}" -f `
-        $t.Index, $t.Codec, $t.Channels, $ActionLabel, $OutputLabel, $t.Rule
+    $line = "{0,-4} {1,-8} {2,-5} {3,-16} {4,-40} {5,-5} {6}" -f `
+        $t.Index, $t.Codec, $t.Channels, $ActionLabel, $OutputLabel, $PriLabel, $t.Rule
 
     Write-Host $line -ForegroundColor $Color
 }
