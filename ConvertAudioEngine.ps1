@@ -1,5 +1,5 @@
 # =====================================================================
-#  ConvertAudioEngine.ps1 — (Version 1.v.d RC)
+#  ConvertAudioEngine.ps1 — (Version 1.v.f RC)
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
 #  Modular Codec Groups
@@ -7,6 +7,7 @@
 #  Downmix is only used for sources with more than 5.1 channels.
 #  Audio 5.1 sources are only re‑encoded.
 #  Added Priority Mapping (default 0-100)
+#  Added dialnorm, dsur_mode
 # =====================================================================
 
 param(
@@ -142,13 +143,18 @@ $AudioRules = $Rules_EAC3_Atmos + $Rules_TrueHD + $Rules_DTS + $Rules_AAC + $Rul
 
 # =====================================================================
 #  ENGINE: PRIORITY SORT
-#  Rules are sorted by Priority descending before matching begins.
-#  Ties preserve original definition order (stable sort via index).
-#  Default priority is 0. Set a rule's Priority higher (e.g. 50, 100)
-#  to make it win over other rules that would also match the same track.
+#  Rules are sorted by Priority (highest first).
+#  If priorities match, original rule order is preserved.
+#  Default Priority is 0; raise it (0-100) to make a rule win.
 # =====================================================================
+$i = 0
 $AudioRules = $AudioRules |
-    ForEach-Object { $i = 0 } { [PSCustomObject]@{ Rule=$_; Index=$i++ } } |
+    ForEach-Object {
+        [PSCustomObject]@{
+            Rule  = $_
+            Index = $i++
+        }
+    } |
     Sort-Object { $_.Rule.Priority } -Descending |
     ForEach-Object { $_.Rule }
 
@@ -365,10 +371,12 @@ function Build-FFmpegCommand {
         elseif ($t.Downmix) {
             $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
-                "-ac","6",
-                "-b:a:$i",$t.Bitrate,
-                "-metadata:s:a:$i","title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag",
-                "-cutoff","20000"
+        	"-ac","6",
+        	"-b:a:$i",$t.Bitrate,
+        	"-dialnorm","-31",
+        	"-dsur_mode","0",
+        	"-metadata:s:a:$i","title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag",
+        	"-cutoff","20000"
             ))
             $t.Output = "DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
         }
@@ -377,19 +385,23 @@ function Build-FFmpegCommand {
             #       high-frequency limiting is only needed for multichannel downmixes.
             $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
-                "-ac","2",
-                "-b:a:$i",$t.Bitrate,
-                "-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
+        	"-ac","2",
+        	"-b:a:$i",$t.Bitrate,
+        	"-dialnorm","-31",
+        	"-dsur_mode","0",
+        	"-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
         }
         else {
             $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
-                "-ac","6",
-                "-b:a:$i",$t.Bitrate,
-                "-metadata:s:a:$i","title=DD+ 5.1 ($($t.Bitrate))$LangTag",
-                "-cutoff","20000"
+        	"-ac","6",
+        	"-b:a:$i",$t.Bitrate,
+        	"-dialnorm","-31",
+        	"-dsur_mode","0",
+        	"-metadata:s:a:$i","title=DD+ 5.1 ($($t.Bitrate))$LangTag",
+        	"-cutoff","20000"
             ))
             $t.Output = "DD+ 5.1 ($($t.Bitrate))$LangTag"
         }
