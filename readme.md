@@ -108,8 +108,6 @@ It works well for my use cases, but **test it on a few files first** before runn
 Feel free to open issues or submit pull requests if you find bugs or want to add features.
 
 ## Planned Improvements
-
 - Batch/folder processing mode
-- Better logging and verbose output
 - Keep all 7.1 Audio Tracks
 
