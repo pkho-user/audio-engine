@@ -21,7 +21,7 @@ $ThreadCount = 8    # User‑adjustable (4–16). Audio doesn't gain speed from 
 $CommentaryKeywords = @("commentary","director","producer","writer","cast","behind","bonus","alt","interview")
 
 # Resolve ffprobe/ffmpeg relative to the script's own directory
-# instead of the directory the user ran the script from.
+# instead of the caller's working directory.
 $ffprobe = Join-Path $PSScriptRoot "ffprobe.exe"
 $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
 
@@ -265,10 +265,6 @@ function Process-AudioTracks {
             $Rule = "EAC3_MalformedLayout_Guard"
         }
 
-        # Detect DTS-HD variants (MA/HRA)
-        # Removed: $IsDTSHD local detection — Tag="DTSHD" in the rule table is now
-        # the single source of truth. The override block below reads $match.Tag instead.
-
         # Remove stereo commentary tracks
         if (Test-IsCommentary -Channels $Channels -Title $Title) {
             $Processed += [PSCustomObject]@{
@@ -301,10 +297,6 @@ function Process-AudioTracks {
         # --- DTS-HD Bitrate Override  ---
         # Guard with -not $Passthrough so this block cannot
         # accidentally overwrite the bitrate/rule of a future
-        # TS passthrough rule if one is ever added.
-        # Unified: $IsDTSHD removed — detection now comes from Tag="DTSHD"
-        # set directly in the rule table (single source of truth).
-        # $match guard ensures this never fires on fallback paths.
         if ($match -and $Codec -eq "dts" -and $Channels -gt 2 -and -not $Passthrough) {
             if ($match.Tag -eq "DTSHD") {
                 $Bitrate = "1024k"
@@ -343,7 +335,6 @@ function Build-FFmpegCommand {
     param($Tracks, $InputFile, $ThreadCount)
 
     # Renamed from $args to $ffArgs.
-    # $args is a reserved PowerShell automatic variable; assigning
     $ffArgs = New-Object System.Collections.Generic.List[string]
     $ffArgs.AddRange([string[]](
         "-threads",$ThreadCount,
@@ -453,8 +444,8 @@ foreach ($t in $tracks) {
 
     # Color selection
     $Color = switch ($t.Action) {
-        "Passthrough" { "Green" }      # Keep green for passthrough (good news)
-        "Downmix"     { "Yellow" }     # Keep yellow for downmix (warning-ish)
+        "Passthrough" { "Green" }      # Keep green for passthrough (good)
+        "Downmix"     { "Yellow" }     # Keep yellow for downmix (warning)
         "Encode"      { "Cyan" }       # Cyan for encoding (main action)
         "Removed"     { "Red" }        # Red for removed (important)
         default       { "White" }
