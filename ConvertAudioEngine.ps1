@@ -1,8 +1,8 @@
 # =====================================================================
-#  ConvertAudioEngine.ps1 — ENGINE MODE REFACTOR (Version 1.v.d RC)
+#  ConvertAudioEngine.ps1 — (Version 1.v.d RC)
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
-#  Modular Codec Groups → Replaced Monolithic Rule Array
+#  Modular Codec Groups
 #  Rule table reorganized by codec family
 #  Downmix is only used for sources with more than 5.1 channels.
 #  Audio 5.1 sources are only re‑encoded.
