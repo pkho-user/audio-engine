@@ -15,18 +15,18 @@ param(
     [string]$InputFile
 )
 
-# =====================================================================
+# =========================================
 #  ENGINE: GLOBAL SETTINGS
-# =====================================================================
-$ThreadCount = 8 # User‑adjustable (4–16). Audio doesn't gain speed from more threads.
+# =========================================
+$ThreadCount = 8 # User‑adjustable (4–16).
 $CommentaryKeywords = @("commentary","director","producer","writer","cast","behind","bonus","alt","interview")
 
 $ffprobe = Join-Path $PSScriptRoot "ffprobe.exe"
 $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
 
-# =====================================================================
+# =========================
 #  ENGINE: CHANNEL FILTER
-# =====================================================================
+# =========================
 class ChannelFilter {
     [string] $Op
     [int]    $Value
@@ -49,9 +49,9 @@ class ChannelFilter {
     static [ChannelFilter] $MoreThanTwo = [ChannelFilter]::new("gt", 2)
 }
 
-# =====================================================================
+# =============================
 #  ENGINE: AUDIO RULE GROUPS
-# =====================================================================
+# =============================
 
 # AAC FAMILY
 $Rules_AAC = @(
@@ -148,10 +148,10 @@ $Rules_PCMFLAC = @(
     }
 )
 
-# =====================================================================
+# ============================================================
 #  ENGINE: MERGE ALL AUDIO RULE GROUPS
 #  (Adding a new codec = define $Rules_XYZ, then append here)
-# =====================================================================
+# ============================================================
 $AudioRules = $Rules_EAC3_Atmos + $Rules_TrueHD + $Rules_DTS + $Rules_AAC + $Rules_PCMFLAC
 
 # Priority sort
@@ -172,9 +172,9 @@ $AudioRules = $AudioRules | ForEach-Object {
          Add-Member -NotePropertyName ProfileRegexObj -NotePropertyValue $profileVal -PassThru
 }
 
-# =====================================================================
+# ==========================
 #  PROBE
-# =====================================================================
+# ==========================
 function Get-AudioStreams {
     param([string]$File)
 
@@ -191,9 +191,9 @@ function Get-AudioStreams {
     }
 }
 
-# =====================================================================
+# ===========================
 #  COMMENTARY DETECTOR
-# =====================================================================
+# ===========================
 function Test-IsCommentary {
     param($Channels, $Title)
 
@@ -206,9 +206,9 @@ function Test-IsCommentary {
     return $false
 }
 
-# =====================================================================
+# ===========================
 #  RULE MATCHER
-# =====================================================================
+# ===========================
 function Resolve-AudioRule {
     param($Codec, $Channels, $Profile, $Title, $Handler)
 
@@ -239,9 +239,9 @@ function Resolve-AudioRule {
     return $null
 }
 
-# =====================================================================
+# =============================
 #  PROCESS TRACKS
-# =====================================================================
+# =============================
 function Convert-AudioTracks {
     param($Streams)
 
@@ -326,9 +326,9 @@ function Convert-AudioTracks {
     return $Processed
 }
 
-# =====================================================================
+# =============================
 #  FFMPEG COMMAND BUILDER
-# =====================================================================
+# =============================
 function Build-FFmpegCommand {
     param($Tracks, $InputFile, $ThreadCount)
 
@@ -410,9 +410,9 @@ function Build-FFmpegCommand {
     return $ffArgs
 }
 
-# =====================================================================
+# ===============================================================
 #  MAIN EXECUTION
-# =====================================================================
+# ===============================================================
 Write-Host "=== Probing Audio Streams ===" -ForegroundColor Cyan
 $streams = Get-AudioStreams -File $InputFile
 
@@ -424,9 +424,9 @@ $cmd = Build-FFmpegCommand -Tracks $tracks -InputFile $InputFile -ThreadCount $T
 
 & $ffmpeg @cmd
 
-# =====================================================================
+# =================================================================
 #  SUMMARY ENGINE
-# =====================================================================
+# =================================================================
 
 Write-Host ""
 Write-Host "=== AUDIO PROCESSING SUMMARY ===" -ForegroundColor Cyan
