@@ -148,7 +148,10 @@ $Rules_PCMFLAC = @(
     }
 )
 
-# Merge
+# =====================================================================
+#  ENGINE: MERGE ALL AUDIO RULE GROUPS
+#  (Adding a new codec = define $Rules_XYZ, then append here)
+# =====================================================================
 $AudioRules = $Rules_EAC3_Atmos + $Rules_TrueHD + $Rules_DTS + $Rules_AAC + $Rules_PCMFLAC
 
 # Priority sort
