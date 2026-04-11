@@ -1,5 +1,5 @@
 # =====================================================================
-#  ConvertAudioEngine.ps1 — (Version 1.v.h RC) Production-daily use
+#  ConvertAudioEngine.ps1 — (Version 1.vh RC) Production-daily use
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
 #  Modular Codec Groups
@@ -101,12 +101,12 @@ $Rules_TrueHD = @(
     [PSCustomObject]@{
         CodecRegex="^(mlp|truehd|true-hd)$"; Channels=6; ProfileRegex=$null
         Action="Passthrough"; Bitrate=$null; PassthroughTag="TrueHD_5.1_Passthrough";
-        Rule="TrueHD_5.1_Passthrough"; Priority=81
+        Rule="TrueHD_5.1_Passthrough"; Priority=80
     },
     [PSCustomObject]@{
         CodecRegex="^(mlp|truehd|true-hd)$"; Channels=8; ProfileRegex=$null
         Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null;
-        Rule="TrueHD_7.1_Downmix_1024k"; Priority=80
+        Rule="TrueHD_7.1_Downmix_1024k"; Priority=81
     }
 )
 
@@ -410,9 +410,9 @@ function Build-FFmpegCommand {
     return $ffArgs
 }
 
-# ===============================================================
+# =======================================
 #  MAIN EXECUTION
-# ===============================================================
+# =======================================
 Write-Host "=== Probing Audio Streams ===" -ForegroundColor Cyan
 $streams = Get-AudioStreams -File $InputFile
 
@@ -424,9 +424,9 @@ $cmd = Build-FFmpegCommand -Tracks $tracks -InputFile $InputFile -ThreadCount $T
 
 & $ffmpeg @cmd
 
-# =================================================================
+# ==========================================
 #  SUMMARY ENGINE
-# =================================================================
+# ==========================================
 
 Write-Host ""
 Write-Host "=== AUDIO PROCESSING SUMMARY ===" -ForegroundColor Cyan
