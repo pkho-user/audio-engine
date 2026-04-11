@@ -334,7 +334,7 @@ function Build-FFmpegCommand {
 
     $ffArgs = New-Object System.Collections.Generic.List[string]
 
-    # Global options (cleaned)
+    # Global options
     $ffArgs.AddRange([string[]](
         "-threads",$ThreadCount,
         "-analyzeduration","100M",
