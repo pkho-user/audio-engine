@@ -397,7 +397,7 @@ function Build-FFmpegCommand {
                 "-ac","2",
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
-                "-dsurmod","0", # Dolby Surround Mode metadata field, only for EAC3 encoder.
+                "-dsur_mode","notindicated", # Dolby Surround Mode metadata field, for EAC3 encoder.
                 "-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
