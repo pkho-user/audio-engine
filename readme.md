@@ -103,7 +103,7 @@ This engine applies Dolby‑safe metadata parameters depending on the output cha
 | **Downmix (7.1→5.1)** | ✔        | ❌         |
 | **Passthrough**       | ❌        | ❌         |
 
-- -dialnorm and -dsur_mode are in latest version of FFmpeg 8.1
+- -dialnorm and -dsur_mode are options in FFmpeg 8.1
 - Run: ffmpeg -h encoder=eac3
 
 ## Customization
