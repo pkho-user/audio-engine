@@ -397,7 +397,7 @@ function Build-FFmpegCommand {
                 "-ac","2",
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
-                "-dsur_mode","notindicated",
+                "-dsurmod","0",
                 "-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
