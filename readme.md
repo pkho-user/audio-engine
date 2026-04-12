@@ -99,8 +99,8 @@ This engine applies Dolby‑safe metadata parameters depending on the output cha
 | Track Type            | dialnorm | dsur_mode |
 |-----------------------|----------|-----------|
 | **Stereo (2.0)**      | ✔        | ✔         |
-| **5.1 Encode**        | ✔        | ✔         |
-| **Downmix (7.1→5.1)** | ✔        | ✔         |
+| **5.1 Encode**        | ✔        | ❌         |
+| **Downmix (7.1→5.1)** | ✔        | ❌         |
 | **Passthrough**       | ❌        | ❌         |
 
 ## Customization
