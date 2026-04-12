@@ -94,14 +94,17 @@ The script uses a simple rule-based system:
 If something doesn't match any rule, it falls back to sensible defaults.
 
 ## Dolby Metadata Behavior (Per Track Type)
-
 This engine applies Dolby‑safe metadata parameters depending on the output channel layout.
+
 | Track Type            | dialnorm | dsur_mode |
 |-----------------------|----------|-----------|
 | **Stereo (2.0)**      | ✔        | ✔         |
 | **5.1 Encode**        | ✔        | ❌         |
 | **Downmix (7.1→5.1)** | ✔        | ❌         |
 | **Passthrough**       | ❌        | ❌         |
+
+- -dialnorm and -dsur_mode are in latest version of FFmpeg 8.1
+- Run: ffmpeg -h encoder=eac3
 
 ## Customization
 
