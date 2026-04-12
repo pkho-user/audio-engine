@@ -407,7 +407,7 @@ function Build-FFmpegCommand {
                 "-c:a:$i","eac3",
                 "-ac","6",
                 "-b:a:$i",$t.Bitrate,
-                "-dialnorm:a:$i","-31",
+                "-dialnorm","-31",
                 "-cutoff","20000",
                 "-metadata:s:a:$i","title=DD+ 5.1 ($($t.Bitrate))$LangTag"
             ))
