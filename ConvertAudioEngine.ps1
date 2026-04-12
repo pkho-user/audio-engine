@@ -1,5 +1,5 @@
 # =====================================================================
-#  ConvertAudioEngine.ps1 — (Version 1.vh RC) Production-daily use
+#  ConvertAudioEngine.ps1 — (Version 1.vh) Production-daily use
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
 #  Modular Codec Groups
@@ -7,7 +7,6 @@
 #  Downmix is only used for sources with more than 5.1 channels.
 #  Audio 5.1 sources are only re‑encoded.
 #  Added Priority Mapping (default 0-100)
-#  Added dialnorm, dsur_mode
 # =====================================================================
 
 param(
@@ -23,6 +22,13 @@ $CommentaryKeywords = @("commentary","director","producer","writer","cast","behi
 
 $ffprobe = Join-Path $PSScriptRoot "ffprobe.exe"
 $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
+
+foreach ($bin in $ffprobe, $ffmpeg) {
+    if (-not (Test-Path $bin)) {
+        Write-Error "Missing required binary: $bin"
+        exit 1
+    }
+}
 
 # =========================
 #  ENGINE: CHANNEL FILTER
@@ -101,12 +107,12 @@ $Rules_TrueHD = @(
     [PSCustomObject]@{
         CodecRegex="^(mlp|truehd|true-hd)$"; Channels=6; ProfileRegex=$null
         Action="Passthrough"; Bitrate=$null; PassthroughTag="TrueHD_5.1_Passthrough";
-        Rule="TrueHD_5.1_Passthrough"; Priority=80
+        Rule="TrueHD_5.1_Passthrough"; Priority=81
     },
     [PSCustomObject]@{
         CodecRegex="^(mlp|truehd|true-hd)$"; Channels=8; ProfileRegex=$null
         Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null;
-        Rule="TrueHD_7.1_Downmix_1024k"; Priority=81
+        Rule="TrueHD_7.1_Downmix_1024k"; Priority=80
     }
 )
 
@@ -123,9 +129,9 @@ $Rules_DTS = @(
         Rule="DTS_Multichannel_Encode_768k"; Priority=71
     },
     [PSCustomObject]@{
-    	CodecRegex="^(dts)$"; Channels=2; ProfileRegex=$null
-    	Action="Encode"; Bitrate="256k"; PassthroughTag=$null;
-    	Rule="DTS_2.0_Encode_256k"; Priority=70
+        CodecRegex="^(dts)$"; Channels=2; ProfileRegex=$null
+        Action="Encode"; Bitrate="256k"; PassthroughTag=$null;
+        Rule="DTS_2.0_Encode_256k"; Priority=70
     }
 )
 
@@ -184,10 +190,14 @@ function Get-AudioStreams {
     )
 
     $raw = & $script:ffprobe @probeArgs 2>$null
+    if (-not $raw) {
+        Write-Error "ffprobe returned no output. Check the input file: $File"
+        exit 1
+    }
     try { return ($raw | ConvertFrom-Json).streams }
     catch {
-        Write-Host "Failed to parse ffprobe JSON." -ForegroundColor Red
-        exit
+        Write-Error "Failed to parse ffprobe JSON: $_"
+        exit 1
     }
 }
 
@@ -216,7 +226,7 @@ function Resolve-AudioRule {
 
         if ($r.CodecRegexObj -and -not $r.CodecRegexObj.IsMatch($Codec)) { continue }
 
-        if ($r.Channels -ne $null) {
+        if ($null -ne $r.Channels) {
             if ($r.Channels -is [ChannelFilter]) {
                 if (-not $r.Channels.Matches($Channels)) { continue }
             }
@@ -251,7 +261,7 @@ function Convert-AudioTracks {
     foreach ($s in $Streams) {
 
         $Codec    = $s.codec_name
-        $Channels = $s.channels
+        $Channels = [int]$s.channels
         $Profile  = $s.profile
 
         $Title    = if ($s.tags) { $s.tags.title } else { $null }
@@ -262,14 +272,24 @@ function Convert-AudioTracks {
         $Rule = $null
 
         # --- Malformed Layout Guards (include 7ch) ---
-        if ($Codec -eq "aac" -and $Channels -ge 7 -and $Channels -lt 8) {
+        if ($Codec -eq "aac" -and $Channels -eq 7) {
             $Channels = 6
-            $Rule = "AAC_MalformedLayout_Guard"
+            if (-not $Rule) { $Rule = "AAC_MalformedLayout_Guard" }
         }
 
-        if ($Codec -eq "eac3" -and $Channels -ge 7 -and $Channels -lt 8) {
+        if ($Codec -eq "eac3" -and $Channels -eq 7) {
             $Channels = 6
-            $Rule = "EAC3_MalformedLayout_Guard"
+            if (-not $Rule) { $Rule = "EAC3_MalformedLayout_Guard" }
+        }
+
+        if ($Codec -match "^(mlp|truehd|true-hd)$" -and $Channels -eq 7) {
+            $Channels = 8
+            if (-not $Rule) { $Rule = "TrueHD_MalformedLayout_Guard" }
+        }
+
+        if ($Codec -match "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$" -and $Channels -eq 7) {
+            $Channels = 8
+            if (-not $Rule) { $Rule = "PCMFLAC_MalformedLayout_Guard" }
         }
 
         # Commentary removal — now with full schema
@@ -366,9 +386,8 @@ function Build-FFmpegCommand {
                 "-ac","6",
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
-                "-dsur_mode","0",
-                "-metadata:s:a:$i","title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag",
-                "-cutoff","20000"
+                "-cutoff","20000",
+                "-metadata:s:a:$i","title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
         }
@@ -378,7 +397,7 @@ function Build-FFmpegCommand {
                 "-ac","2",
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
-                "-dsur_mode","0",
+                "-dsur_mode","notindicated",
                 "-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
@@ -389,9 +408,8 @@ function Build-FFmpegCommand {
                 "-ac","6",
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
-                "-dsur_mode","0",
-                "-metadata:s:a:$i","title=DD+ 5.1 ($($t.Bitrate))$LangTag",
-                "-cutoff","20000"
+                "-cutoff","20000",
+                "-metadata:s:a:$i","title=DD+ 5.1 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 5.1 ($($t.Bitrate))$LangTag"
         }
@@ -405,7 +423,9 @@ function Build-FFmpegCommand {
     }
 
     $ffArgs.AddRange([string[]]("-map","0:s?","-c:s","copy"))
-    $ffArgs.Add("$([System.IO.Path]::GetFileNameWithoutExtension($InputFile))_Processed.mkv")
+    $outDir  = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($InputFile))
+    $outName = [System.IO.Path]::GetFileNameWithoutExtension($InputFile) + "_Processed.mkv"
+    $ffArgs.Add([System.IO.Path]::Combine($outDir, $outName))
 
     return $ffArgs
 }
