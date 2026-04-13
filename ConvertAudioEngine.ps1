@@ -361,7 +361,7 @@ function Build-FFmpegCommand {
         "-probesize","100M",
         "-err_detect","ignore_err",
         "-i",$InputFile,
-        "-map","0:v",
+        "-map","0:v?",
         "-c:v","copy",
         "-map_chapters","0"
     ))
