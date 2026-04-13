@@ -1,5 +1,5 @@
-# =====================================================================
-#  ConvertAudioEngine.ps1 — (Version 1.vj) Production-daily use
+# ==================================================================
+#  ConvertAudioEngine.ps1 — (Version 1.vk) Production-daily use
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
 #  Modular Codec Groups
@@ -7,8 +7,11 @@
 #  Downmix is only used for sources with more than 5.1 channels.
 #  Audio 5.1 sources are only re‑encoded.
 #  Added Priority Mapping (default 0-100)
-# =====================================================================
+#  -dialnorm and -dsur_mode are options in FFmpeg 8.1
+#  Run: ffmpeg -h encoder=eac3
+# ==================================================================
 
+[CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
     [string]$InputFile
@@ -169,14 +172,14 @@ $AudioRules = $AudioRules |
     Sort-Object { $_.Rule.Priority } -Descending |
     ForEach-Object { $_.Rule }
 
-# Precompile regex
-$AudioRules = $AudioRules | ForEach-Object {
-    $r = $_
-    $codecVal   = if ($r.CodecRegex)   { [regex]::new($r.CodecRegex,'IgnoreCase') }   else { $null }
-    $profileVal = if ($r.ProfileRegex) { [regex]::new($r.ProfileRegex,'IgnoreCase') } else { $null }
-    $r | Add-Member -NotePropertyName CodecRegexObj   -NotePropertyValue $codecVal   -PassThru |
-         Add-Member -NotePropertyName ProfileRegexObj -NotePropertyValue $profileVal -PassThru
-}
+# Precompile regex = correct.
+$AudioRules = $AudioRules | Select-Object -Property *,
+    @{ Name='CodecRegexObj';   Expression={
+        if ($_.CodecRegex)   { [regex]::new($_.CodecRegex,   'IgnoreCase') } else { $null }
+    }},
+    @{ Name='ProfileRegexObj'; Expression={
+        if ($_.ProfileRegex) { [regex]::new($_.ProfileRegex, 'IgnoreCase') } else { $null }
+    }}
 
 # ==========================
 #  PROBE
@@ -191,13 +194,11 @@ function Get-AudioStreams {
 
     $raw = & $script:ffprobe @probeArgs 2>$null
     if (-not $raw) {
-        Write-Error "ffprobe returned no output. Check the input file: $File"
-        exit 1
+        throw "ffprobe returned no output. Check the input file: $File"
     }
     try { return ($raw | ConvertFrom-Json).streams }
     catch {
-        Write-Error "Failed to parse ffprobe JSON: $_"
-        exit 1
+        throw "Failed to parse ffprobe JSON: $_"
     }
 }
 
@@ -363,6 +364,7 @@ function Build-FFmpegCommand {
         "-i",$InputFile,
         "-map","0:v?",
         "-c:v","copy",
+        "-map_metadata","0",
         "-map_chapters","0"
     ))
 
@@ -398,6 +400,7 @@ function Build-FFmpegCommand {
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
                 "-dsur_mode","1", # Dolby Surround Mode, for EAC3 encoder.
+                "-stereo_rematrixing","true",  # Explicitly enable rematrixing
                 "-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
