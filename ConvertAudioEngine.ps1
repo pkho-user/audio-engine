@@ -1,14 +1,13 @@
 # ==================================================================
-#  ConvertAudioEngine.ps1 — (Version 1.vk) Production-daily use
+#  ConvertAudioEngine.ps1 — (Version 1.vm) Production-daily use
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
-#  Modular Codec Groups
-#  Rule table reorganized by codec family
-#  Downmix is only used for sources with more than 5.1 channels.
-#  Audio 5.1 sources are only re‑encoded.
-#  Added Priority Mapping (default 0-100)
-#  -dialnorm and -dsur_mode are options in FFmpeg 8.1
-#  Run: ffmpeg -h encoder=eac3
+#  Audio tracks over 5.1 are downmixed (1024k)
+#  Audio tracks at 5.1 are re‑encoded (768k)
+#  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
+#  Priority Mapping (default 0-100)
+#  Run: ffmpeg -h encoder=eac3 to see available options
+#  Replaced AC6 with Pan Filter - Correct Downmixing
 # ==================================================================
 
 [CmdletBinding()]
@@ -124,12 +123,17 @@ $Rules_DTS = @(
     [PSCustomObject]@{
         CodecRegex="^(dts)$"; Channels=[ChannelFilter]::MoreThanTwo; ProfileRegex="HD|MA|HRA"
         Action="Encode"; Bitrate="1024k"; PassthroughTag=$null;
-        Rule="DTSHD_Multichannel_Encode_1024k"; Priority=72
+        Rule="DTSHD_Multichannel_Encode_1024k"; Priority=73
     },
     [PSCustomObject]@{
         CodecRegex="^(dts)$"; Channels=[ChannelFilter]::MoreThanTwo; ProfileRegex=$null
         Action="Encode"; Bitrate="768k"; PassthroughTag=$null;
-        Rule="DTS_Multichannel_Encode_768k"; Priority=71
+        Rule="DTS_Multichannel_Encode_768k"; Priority=72
+    },
+    [PSCustomObject]@{
+        CodecRegex="^(dts)$"; Channels=2; ProfileRegex="HD|MA|HRA"
+        Action="Encode"; Bitrate="384k"; PassthroughTag=$null;
+        Rule="DTSHD_2.0_Encode_384k"; Priority=71
     },
     [PSCustomObject]@{
         CodecRegex="^(dts)$"; Channels=2; ProfileRegex=$null
@@ -152,8 +156,8 @@ $Rules_PCMFLAC = @(
     },
     [PSCustomObject]@{
         CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=2
-        ProfileRegex=$null; Action="Encode"; Bitrate="256k"
-        PassthroughTag=$null; Rule="PCMFLAC_2.0_Encode_256k"; Priority=60
+        ProfileRegex=$null; Action="Encode"; Bitrate="384k"
+        PassthroughTag=$null; Rule="PCMFLAC_2.0_Encode_384k"; Priority=60
     }
 )
 
@@ -266,7 +270,7 @@ function Convert-AudioTracks {
         $Profile  = $s.profile
 
         $Title    = if ($s.tags) { $s.tags.title } else { $null }
-        $Lang     = if ($s.tags -and $s.tags.language) { $s.tags.language } else { "und" }
+        $Lang     = if ($s.tags -and $s.tags.language) { $s.tags.language } else { "eng" }
         $Handler  = if ($s.tags) { $s.tags.handler_name } else { $null }
 
         $RealIndex = $s.index
@@ -361,6 +365,7 @@ function Build-FFmpegCommand {
         "-analyzeduration","100M",
         "-probesize","100M",
         "-err_detect","ignore_err",
+        "-drc_scale","0",
         "-i",$InputFile,
         "-map","0:v?",
         "-c:v","copy",
@@ -383,13 +388,20 @@ function Build-FFmpegCommand {
             $t.Output = "$($t.PassthroughTag)$LangTag"
         }
         elseif ($t.Downmix) {
+            # --- 7.1 → 5.1 DOWNMIX PATH ---
+            # Downmixes any 7.1 audio track to EAC3 (DD+ 5.1) using an ITU-R BS.775
+            # Compliant pan matrix. Side surrounds (SL/SR) are folded into the rear
+            # Channels (BL/BR) with -3 dB attenuation to preserve spatial balance.
+            # Dolby DRC is disabled, and the final output is encoded as DD+ 5.1
+            $panFilter = "pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR"
+
             $ffArgs.AddRange([string[]](
-                "-c:a:$i","eac3",
-                "-ac","6",
-                "-b:a:$i",$t.Bitrate,
-                "-dialnorm","-31",
-                "-cutoff","20000",
-                "-metadata:s:a:$i","title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
+                "-filter:a:$i", $panFilter,
+                "-c:a:$i",      "eac3",
+                "-b:a:$i",      $t.Bitrate,
+                "-dialnorm",    "-31",
+                "-cutoff",      "20000",
+                "-metadata:s:a:$i", "title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
         }
@@ -406,6 +418,12 @@ function Build-FFmpegCommand {
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
         }
         else {
+
+            # --- 5.1 RE-ENCODE PATH ---
+            # This block re-encodes any 5.1 audio track to EAC3 (DD+ 5.1).
+            # No downmixing occurs here-input must already be 5.1.
+            # Dolby DRC is disabled. Loudness signaling handled by -dialnorm -31.
+
             $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
                 "-ac","6",
@@ -468,7 +486,7 @@ foreach ($t in $tracks) {
     $Color = switch ($t.Action) {
         "Passthrough" { "Green" }      # Keep green for passthrough (good)
         "Downmix"     { "Yellow" }     # Keep yellow for downmix (warning)
-        "Encode"      { "Cyan" }       # Cyan for encoding (main action)
+        "Encode"      { "Blue" }       # Blue for encoding (main action)
         "Removed"     { "Red" }        # Red for removed (important)
         default       { "White" }
     }
@@ -479,6 +497,7 @@ foreach ($t in $tracks) {
         "Downmix"     { "Downmix 5.1" }
         "Encode"      {
             if     ($t.Bitrate -eq "256k")  { "Encode 256k" }
+            elseif ($t.Bitrate -eq "384k")  { "Encode 384k" }
             elseif ($t.Bitrate -eq "768k")  { "Encode 768k" }
             elseif ($t.Bitrate -eq "1024k") { "Encode 1024k" }
             else                            { "Encode" }
@@ -490,7 +509,7 @@ foreach ($t in $tracks) {
     # Build output label
     $OutputLabel = if ($t.Output) { $t.Output } else { "(none)" }
 
-    # Priority label — show dash for removed/fallback tracks (priority not applicable)
+    # Show "-" for removed tracks, otherwise priority.
     $PriLabel = if ($t.Action -eq "Removed") { "-" } else { $t.Priority }
 
     # Final formatted line
