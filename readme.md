@@ -116,10 +116,8 @@ You can easily tweak these in the script:
 
 ## Disclaimer
 
-This script was initially created with AI assistance and then reviewed and customized.  
-It works well for my use cases, but **test it on a few files first** before running it on your whole library. Always keep backups of your original files.
-
-Feel free to open issues or submit pull requests if you find bugs or want to add features.
+Always test it on a few files first before running it on your whole library.  
+Always keep backups of your original files.
 
 ##
 --
