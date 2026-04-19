@@ -1,7 +1,8 @@
-# Audio Converter Engine (DD+ 5.1 Focused)
+# Converts 7.1 audio tracks to DDP 5.1
 
 > **Downmix is only used for sources with more than 5.1 channels.  
 > Audio 5.1 sources are only re‑encoded.  
+> Supports TrueHD, DTS‑HD, DTS Core, AAC, PCM, and FLAC.  
 > No video re‑encode — video is always passed through untouched.**
 
 A PowerShell script that processes MKV files with FFmpeg to clean up and standardize the audio tracks.
