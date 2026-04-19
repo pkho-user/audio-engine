@@ -20,29 +20,33 @@ This script is a **true rule-based engine**, with safety, metadata integrity, an
 
 | Feature / Capability | This Engine | Typical GitHub Scripts |
 |----------------------|-------------|-------------------------|
-| Rule‑based audio engine | ✔ | ✖ |
-| Precompiled regex for performance | ✔ | ✖ |
-| Commentary detection & removal | ✔ | ✖ |
-| TrueHD 5.1 passthrough | ✔ | ✖ (often re‑encodes) |
-| EAC3 Atmos (JOC) passthrough | ✔ | ✖ |
+| **De-sync Protection** | ✔ | ✖ |
+| **Sync-Stability System** | ✔ | ✖ |
+| **PTS Correction** | ✔ | ✖ |
+| **Mux-Queue Protection** | ✔ | ✖ |
+| **No video re‑encode** | ✔ | Sometimes broken |
+| **TrueHD 5.1 passthrough** | ✔ | ✖ (often re‑encodes) |
+| **EAC3 Atmos (JOC) passthrough** | ✔ | ✖ |
 | **EAC3 5.1 / 2.0 passthrough** | ✔ | ✖ |
-| **PCM/FLAC stereo handled at 384k** | ✔ | ✖ |
-| DTS‑HD MA/HRA detection (1024k) | ✔ | ✖ |
+| **DTS-HD MA/HRA detection (1024k)** | ✔ | ✖ |
 | **DTS Core detection (768k)** | ✔ | ✖ |
-| Malformed layout guards (AAC/EAC3/TrueHD/PCM/FLAC) | ✔ | ✖ |
-| 7.1 → 5.1 intelligent downmixing | ✔ | Partial |
+| **PCM/FLAC stereo handled at 384k** | ✔ | ✖ |
+| **7.1 → 5.1 intelligent downmixing** | ✔ | Partial |
+| Rule-based audio engine | ✔ | ✖ |
+| Modular architecture | ✔ | ✖ |
+| Precompiled regex for performance | ✔ | ✖ |
+| Malformed layout guards (audio codecs) | ✔ | ✖ |
+| Safe fallback rules | ✔ | ✖ |
 | Clean metadata preservation | ✔ | Partial |
 | Language tag preservation | ✔ | ✖ |
 | Subtitle & chapter passthrough | ✔ | Partial |
-| No video re‑encode | ✔ | Sometimes broken |
-| Batch mode (folder processing) | ✖ | Sometimes |
-| Modular architecture | ✔ | ✖ |
-| Clean, color‑coded summary output | ✔ | ✖ |
-| Safe fallback rules | ✔ | ✖ |
 | Consistent output naming | ✔ | ✖ |
-| Keeps original audio tracks | ✖ (deletes original) | ✔ (keeps original) |
 | Adjustable audio bitrates | ✔ | ✖ |
 | Add new codecs easily | ✔ | ✖ |
+| Commentary detection & removal | ✔ | ✖ |
+| Clean, color-coded summary output | ✔ | ✖ |
+| Batch mode (folder processing) | ✖ | Sometimes |
+| Keeps original audio tracks | ✖ (deletes) | ✔ (keeps) |
 
 ## Why DD+?
 
