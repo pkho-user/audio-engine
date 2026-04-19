@@ -1,13 +1,26 @@
 # ==================================================================
-#  ConvertAudioEngine.ps1 — (Version 1.vm) Production-daily use
+#  ConvertAudioEngine.ps1 — (Version 1.vn) Production-daily use
 #  PowerShell 5.1 + 7 Compatible
 #  FFmpeg 8.1 Compatible
 #  Audio tracks over 5.1 are downmixed (1024k)
-#  Audio tracks at 5.1 are re‑encoded (768k)
+#  Audio tracks at 5.1 are re-encoded (768k)
 #  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
 #  Priority Mapping (default 0-100)
 #  Run: ffmpeg -h encoder=eac3 to see available options
-#  Replaced AC6 with Pan Filter - Correct Downmixing
+#  5.1 audio downmix using Pan Filter for channel mapping
+#
+#  De-sync for TrueHD 7.1 / long-duration files:
+#    (1) analyzeduration + probesize raised 100M → 200M
+#        Ensures TrueHD channel layout is fully parsed before encode starts.
+#    (2) -avoid_negative_ts make_zero
+#        Clamps any negative initial PTS from TrueHD streams to zero.
+#    (3) -max_muxing_queue_size 9999
+#        Prevents video copy packets starving the mux queue while the
+#        TrueHD decode → pan filter → EAC3 encode pipeline runs.
+#    (4) aformat=channel_layouts=7.1 prepended to downmix pan filter
+#        Pins the TrueHD decoder output to the canonical 7.1 layout
+#        (FL FR FC LFE BL BR SL SR) before the pan filter reads it.
+#        Guards against Atmos decoder output layout ambiguity.
 # ==================================================================
 
 [CmdletBinding()]
@@ -50,8 +63,10 @@ class ChannelFilter {
             "lt" { return $channels -lt $this.Value }
             "ge" { return $channels -ge $this.Value }
             "le" { return $channels -le $this.Value }
+            "eq" { return $channels -eq $this.Value }
+            default { throw "Unknown ChannelFilter op: $($this.Op)" }
         }
-        return $false
+        return $false  # Unreachable — satisfies PS 5.1 class method return-path analysis
     }
 
     static [ChannelFilter] $MoreThanTwo = [ChannelFilter]::new("gt", 2)
@@ -279,22 +294,22 @@ function Convert-AudioTracks {
         # --- Malformed Layout Guards (include 7ch) ---
         if ($Codec -eq "aac" -and $Channels -eq 7) {
             $Channels = 6
-            if (-not $Rule) { $Rule = "AAC_MalformedLayout_Guard" }
+            $Rule = "AAC_MalformedLayout_Guard"
         }
 
         if ($Codec -eq "eac3" -and $Channels -eq 7) {
             $Channels = 6
-            if (-not $Rule) { $Rule = "EAC3_MalformedLayout_Guard" }
+            $Rule = "EAC3_MalformedLayout_Guard"
         }
 
         if ($Codec -match "^(mlp|truehd|true-hd)$" -and $Channels -eq 7) {
             $Channels = 8
-            if (-not $Rule) { $Rule = "TrueHD_MalformedLayout_Guard" }
+            $Rule = "TrueHD_MalformedLayout_Guard"
         }
 
         if ($Codec -match "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$" -and $Channels -eq 7) {
             $Channels = 8
-            if (-not $Rule) { $Rule = "PCMFLAC_MalformedLayout_Guard" }
+            $Rule = "PCMFLAC_MalformedLayout_Guard"
         }
 
         # Commentary removal — now with full schema
@@ -323,9 +338,9 @@ function Convert-AudioTracks {
         }
         else {
             if ($Channels -le 2)      { $Action="Encode"; $Bitrate="256k";  $Rule="Fallback_2.0_256k" }
-            elseif ($Channels -gt 6)  { $Action="Encode"; $Bitrate="1024k"; $Rule="Fallback_7.1_1024k" }
+            elseif ($Channels -gt 6)  { $Action="Downmix"; $Bitrate="1024k"; $Rule="Fallback_7.1_1024k" }
             else                      { $Action="Encode"; $Bitrate="768k";  $Rule="Fallback_5.1_768k" }
-            $Passthrough=$false; $Downmix=$false; $Tag=$null; $Priority=0
+            $Passthrough=$false; $Downmix=($Action -eq "Downmix"); $Tag=$null; $Priority=0
         }
 
         # --- Safety Audit ---
@@ -359,18 +374,25 @@ function Build-FFmpegCommand {
 
     $ffArgs = New-Object System.Collections.Generic.List[string]
 
-    # Global options
+    # ------------------------------------------------------------------
+    #  Global options
+    #  NOTE — order matters for FFmpeg: all input options must appear
+    #  before -i. Output options (-avoid_negative_ts, -max_muxing_queue_size)
+    #  must appear after -i.
+    # ------------------------------------------------------------------
     $ffArgs.AddRange([string[]](
-        "-threads",$ThreadCount,
-        "-analyzeduration","100M",
-        "-probesize","100M",
-        "-err_detect","ignore_err",
-        "-drc_scale","0",
-        "-i",$InputFile,
-        "-map","0:v?",
-        "-c:v","copy",
-        "-map_metadata","0",
-        "-map_chapters","0"
+        "-threads",             $ThreadCount,
+        "-analyzeduration",     "200M",         # ensures TrueHD channel layout fully parsed
+        "-probesize",           "200M",         # raised from 100M
+        "-err_detect",          "ignore_err",
+        "-drc_scale",           "0",
+        "-i",                   $InputFile,
+        "-avoid_negative_ts",   "make_zero",    # clamps negative TrueHD PTS to zero
+        "-max_muxing_queue_size","9999",        # prevents video copy flooding mux queue during slow audio encode
+        "-map",                 "0:v?",
+        "-c:v",                 "copy",
+        "-map_metadata",        "0",
+        "-map_chapters",        "0"
     ))
 
     $i = 0
@@ -389,11 +411,12 @@ function Build-FFmpegCommand {
         }
         elseif ($t.Downmix) {
             # --- 7.1 → 5.1 DOWNMIX PATH ---
+            # (4) see header note
             # Downmixes any 7.1 audio track to EAC3 (DD+ 5.1) using an ITU-R BS.775
-            # Compliant pan matrix. Side surrounds (SL/SR) are folded into the rear
-            # Channels (BL/BR) with -3 dB attenuation to preserve spatial balance.
-            # Dolby DRC is disabled, and the final output is encoded as DD+ 5.1
-            $panFilter = "pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR"
+            # compliant pan matrix. Side surrounds (SL/SR) are folded into the rear
+            # channels (BL/BR) with -3 dB attenuation to preserve spatial balance.
+            # Dolby DRC is disabled, and the final output is encoded as DD+ 5.1.
+            $panFilter = "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR"
 
             $ffArgs.AddRange([string[]](
                 "-filter:a:$i", $panFilter,
@@ -411,19 +434,17 @@ function Build-FFmpegCommand {
                 "-ac","2",
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
-                "-dsur_mode","1", # Dolby Surround Mode, for EAC3 encoder.
-                "-stereo_rematrixing","true",  # Explicitly enable rematrixing
+                "-dsur_mode","1",           # Dolby Surround Mode, for EAC3 encoder.
+                "-stereo_rematrixing","1",  # Explicitly enable rematrixing
                 "-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
         }
         else {
-
             # --- 5.1 RE-ENCODE PATH ---
             # This block re-encodes any 5.1 audio track to EAC3 (DD+ 5.1).
-            # No downmixing occurs here-input must already be 5.1.
+            # No downmixing occurs here — input must already be 5.1.
             # Dolby DRC is disabled. Loudness signaling handled by -dialnorm -31.
-
             $ffArgs.AddRange([string[]](
                 "-c:a:$i","eac3",
                 "-ac","6",
@@ -464,6 +485,10 @@ Write-Host "=== Building FFmpeg Command ===" -ForegroundColor Cyan
 $cmd = Build-FFmpegCommand -Tracks $tracks -InputFile $InputFile -ThreadCount $ThreadCount
 
 & $ffmpeg @cmd
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "FFmpeg exited with code $LASTEXITCODE. Output may be incomplete."
+    exit $LASTEXITCODE
+}
 
 # ==========================================
 #  SUMMARY ENGINE
