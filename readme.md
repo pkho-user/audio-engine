@@ -5,6 +5,8 @@
 > Supports TrueHD, DTS‑HD, DTS Core, AAC, PCM, and FLAC.  
 > No video re‑encode — video is always passed through untouched.**
 
+**Read the Requirements and Quick-Start at the bottom!**
+
 A PowerShell script that processes MKV files with FFmpeg to clean up and standardize the audio tracks.
 
 It automatically:
