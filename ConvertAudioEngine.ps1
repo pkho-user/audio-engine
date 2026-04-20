@@ -1,9 +1,9 @@
 # ==================================================================
 #  ConvertAudioEngine.ps1 — (Version 1.vn) Production-daily use
-#  PowerShell 5.1 + 7 Compatible
+#  PowerShell 5.1 + 7.5 Compatible
 #  FFmpeg 8.1 Compatible
 #  Audio tracks over 5.1 are downmixed (1024k)
-#  Audio tracks at 5.1 are re-encoded (768k)
+#  EAC3/TrueHD 5.1 passthrough; other 5.1 tracks re-encoded (768k)
 #  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
 #  Priority Mapping (default 0-100)
 #  Run: ffmpeg -h encoder=eac3 to see available options
@@ -207,6 +207,8 @@ function Get-AudioStreams {
     param([string]$File)
 
     $probeArgs = @(
+        "-analyzeduration","200M", # match FFmpeg probe
+        "-probesize","200M",       # match FFmpeg probe
         "-v","quiet","-print_format","json",
         "-show_streams","-select_streams","a",$File
     )
@@ -312,7 +314,7 @@ function Convert-AudioTracks {
             $Rule = "PCMFLAC_MalformedLayout_Guard"
         }
 
-        # Commentary removal — now with full schema
+        # --- Commentary removal ---
         if (Test-IsCommentary -Channels $Channels -Title $Title) {
             $Processed.Add([PSCustomObject]@{
                 Index=$TrackIndex; RealIndex=$RealIndex; Codec=$Codec; Channels=$Channels
@@ -388,7 +390,7 @@ function Build-FFmpegCommand {
         "-drc_scale",           "0",
         "-i",                   $InputFile,
         "-avoid_negative_ts",   "make_zero",    # clamps negative TrueHD PTS to zero
-        "-max_muxing_queue_size","9999",        # prevents video copy flooding mux queue during slow audio encode
+        "-max_muxing_queue_size","9999",        # stops video flooding mux queue when audio is slow
         "-map",                 "0:v?",
         "-c:v",                 "copy",
         "-map_metadata",        "0",
