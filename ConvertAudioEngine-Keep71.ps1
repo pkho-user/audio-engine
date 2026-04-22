@@ -706,6 +706,6 @@ foreach ($t in $tracks) {
     Write-Host $line -ForegroundColor $Color
 }
 
-Write-Host ("-" * $header.Length) -ForegroundColor DarkGray  # $header.Length change to number.
+Write-Host ("-" * $header.Length) -ForegroundColor DarkGray
 Write-Host "=== END OF SUMMARY ===" -ForegroundColor Cyan
 Write-Host ""
