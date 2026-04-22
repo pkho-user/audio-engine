@@ -1,4 +1,4 @@
-# ==================================================================
+# ========================================================================
 #  ConvertAudioEngine.ps1 — (Version 1.vn) Production-daily use
 #  PowerShell 5.1 + 7.5 Compatible
 #  FFmpeg 8.1 Compatible
@@ -10,18 +10,18 @@
 #  5.1 audio downmix using Pan Filter for channel mapping
 #
 #  De-sync for TrueHD 7.1 / long-duration files:
-#    (1) analyzeduration + probesize raised 100M → 200M
-#        Ensures TrueHD channel layout is fully parsed before encode starts.
-#    (2) -avoid_negative_ts make_zero
-#        Clamps any negative initial PTS from TrueHD streams to zero.
-#    (3) -max_muxing_queue_size 9999
-#        Prevents video copy packets starving the mux queue while the
-#        TrueHD decode → pan filter → EAC3 encode pipeline runs.
-#    (4) aformat=channel_layouts=7.1 prepended to downmix pan filter
-#        Pins the TrueHD decoder output to the canonical 7.1 layout
-#        (FL FR FC LFE BL BR SL SR) before the pan filter reads it.
-#        Guards against Atmos decoder output layout ambiguity.
-# ==================================================================
+#  (1) Increase analyzeduration/probesize to 200M for full layout detection
+#      Ensures 7.1 channel layout is fully parsed before encode starts
+#  (2) -avoid_negative_ts make_zero
+#      Clamps any negative initial PTS from TrueHD streams to zero.
+#  (3) -max_muxing_queue_size 9999
+#      Large mux queue to prevent video starving audio pipeline
+#      9999 provides sufficient headroom for 3+ hour files.
+#  (4) aformat=channel_layouts=7.1 prepended to downmix pan filter
+#      Pins the TrueHD decoder output to the canonical 7.1 layout
+#      (FL FR FC LFE BL BR SL SR) before the pan filter reads it.
+#      Guards against Atmos decoder output layout ambiguity.
+# ========================================================================
 
 [CmdletBinding()]
 param(
@@ -29,9 +29,9 @@ param(
     [string]$InputFile
 )
 
-# =========================================
+# ========================================
 #  ENGINE: GLOBAL SETTINGS
-# =========================================
+# ========================================
 $ThreadCount = 8 # User‑adjustable (4–16).
 $CommentaryKeywords = @("commentary","director","producer","writer","cast","behind","bonus","alt","interview")
 
@@ -45,9 +45,14 @@ foreach ($bin in $ffprobe, $ffmpeg) {
     }
 }
 
-# =========================
+if (-not (Test-Path -LiteralPath $InputFile)) {
+    Write-Error "Input file not found: $InputFile"
+    exit 1
+}
+
+# ========================
 #  ENGINE: CHANNEL FILTER
-# =========================
+# ========================
 class ChannelFilter {
     [string] $Op
     [int]    $Value
@@ -72,107 +77,203 @@ class ChannelFilter {
     static [ChannelFilter] $MoreThanTwo = [ChannelFilter]::new("gt", 2)
 }
 
-# =============================
+# ============================
 #  ENGINE: AUDIO RULE GROUPS
-# =============================
+# ============================
 
 # AAC FAMILY
 $Rules_AAC = @(
+    # Rule1: AAC 7.1 → Downmix to 5.1 at 1024k
     [PSCustomObject]@{
-        CodecRegex="^(aac)$"; Channels=8; ProfileRegex=$null
-        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null;
-        Rule="AAC_7.1_Downmix_1024k"; Priority=92
+        CodecRegex     = "^(aac)$"
+        Channels       = 8
+        ProfileRegex   = $null
+        Action         = "Downmix"
+        Bitrate        = "1024k"
+        PassthroughTag = $null
+        Rule           = "AAC_7.1_Downmix_1024k"
+        Priority       = 92
     },
+    # Rule2: AAC 5.1 → Encode at 768k
     [PSCustomObject]@{
-        CodecRegex="^(aac)$"; Channels=6; ProfileRegex=$null
-        Action="Encode"; Bitrate="768k"; PassthroughTag=$null;
-        Rule="AAC_5.1_Encode_768k"; Priority=91
+        CodecRegex     = "^(aac)$"
+        Channels       = 6
+        ProfileRegex   = $null
+        Action         = "Encode"
+        Bitrate        = "768k"
+        PassthroughTag = $null
+        Rule           = "AAC_5.1_Encode_768k"
+        Priority       = 91
     },
+    # Rule3: AAC 2.0 → Encode at 256k
     [PSCustomObject]@{
-        CodecRegex="^(aac)$"; Channels=2; ProfileRegex=$null
-        Action="Encode"; Bitrate="256k"; PassthroughTag=$null;
-        Rule="AAC_2.0_Encode_256k"; Priority=90
+        CodecRegex     = "^(aac)$"
+        Channels       = 2
+        ProfileRegex   = $null
+        Action         = "Encode"
+        Bitrate        = "256k"
+        PassthroughTag = $null
+        Rule           = "AAC_2.0_Encode_256k"
+        Priority       = 90
     }
 )
 
 # EAC3 / ATMOS FAMILY
 $Rules_EAC3_Atmos = @(
+    # Rule1: EAC3 Atmos (JOC) → Passthrough
     [PSCustomObject]@{
-        CodecRegex="^(eac3)$"; Channels=[ChannelFilter]::new("gt", 2); ProfileRegex="JOC|Atmos"
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="EAC3_Atmos_Passthrough";
-        Rule="EAC3_Atmos_Passthrough"; Priority=100
+        CodecRegex     = "^(eac3)$"
+        Channels       = [ChannelFilter]::new("gt", 2)
+        ProfileRegex   = "JOC|Atmos"
+        Action         = "Passthrough"
+        Bitrate        = $null
+        PassthroughTag = "EAC3_Atmos_Passthrough"
+        Rule           = "EAC3_Atmos_Passthrough"
+        Priority       = 100
     },
+    # Rule2: EAC3 7.1 → Downmix to 5.1 at 1024k
     [PSCustomObject]@{
-        CodecRegex="^(eac3)$"; Channels=8; ProfileRegex=$null
-        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null;
-        Rule="EAC3_7.1_Downmix_1024k"; Priority=99
+        CodecRegex     = "^(eac3)$"
+        Channels       = 8
+        ProfileRegex   = $null
+        Action         = "Downmix"
+        Bitrate        = "1024k"
+        PassthroughTag = $null
+        Rule           = "EAC3_7.1_Downmix_1024k"
+        Priority       = 99
     },
+    # Rule3: EAC3 5.1 → Passthrough
     [PSCustomObject]@{
-        CodecRegex="^(eac3)$"; Channels=6; ProfileRegex=$null
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="EAC3_5.1_Passthrough";
-        Rule="EAC3_5.1_Passthrough"; Priority=98
+        CodecRegex     = "^(eac3)$"
+        Channels       = 6
+        ProfileRegex   = $null
+        Action         = "Passthrough"
+        Bitrate        = $null
+        PassthroughTag = "EAC3_5.1_Passthrough"
+        Rule           = "EAC3_5.1_Passthrough"
+        Priority       = 98
     },
+    # Rule4: EAC3 2.0 → Passthrough
     [PSCustomObject]@{
-        CodecRegex="^(eac3)$"; Channels=2; ProfileRegex=$null
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="EAC3_2.0_Passthrough";
-        Rule="EAC3_2.0_Passthrough"; Priority=97
+        CodecRegex     = "^(eac3)$"
+        Channels       = 2
+        ProfileRegex   = $null
+        Action         = "Passthrough"
+        Bitrate        = $null
+        PassthroughTag = "EAC3_2.0_Passthrough"
+        Rule           = "EAC3_2.0_Passthrough"
+        Priority       = 97
     }
 )
 
 # TRUEHD FAMILY
 $Rules_TrueHD = @(
+    # Rule1: TrueHD 5.1 → Passthrough
     [PSCustomObject]@{
-        CodecRegex="^(mlp|truehd|true-hd)$"; Channels=6; ProfileRegex=$null
-        Action="Passthrough"; Bitrate=$null; PassthroughTag="TrueHD_5.1_Passthrough";
-        Rule="TrueHD_5.1_Passthrough"; Priority=81
+        CodecRegex     = "^(mlp|truehd|true-hd)$"
+        Channels       = 6
+        ProfileRegex   = $null
+        Action         = "Passthrough"
+        Bitrate        = $null
+        PassthroughTag = "TrueHD_5.1_Passthrough"
+        Rule           = "TrueHD_5.1_Passthrough"
+        Priority       = 81
     },
+    # Rule2: TrueHD 7.1 → Downmix to 5.1 at 1024k
     [PSCustomObject]@{
-        CodecRegex="^(mlp|truehd|true-hd)$"; Channels=8; ProfileRegex=$null
-        Action="Downmix"; Bitrate="1024k"; PassthroughTag=$null;
-        Rule="TrueHD_7.1_Downmix_1024k"; Priority=80
+        CodecRegex     = "^(mlp|truehd|true-hd)$"
+        Channels       = 8
+        ProfileRegex   = $null
+        Action         = "Downmix"
+        Bitrate        = "1024k"
+        PassthroughTag = $null
+        Rule           = "TrueHD_7.1_Downmix_1024k"
+        Priority       = 80
     }
 )
 
 # DTS FAMILY
 $Rules_DTS = @(
+    # Rule1: DTS-HD Multichannel → Encode at 1024k
     [PSCustomObject]@{
-        CodecRegex="^(dts)$"; Channels=[ChannelFilter]::MoreThanTwo; ProfileRegex="HD|MA|HRA"
-        Action="Encode"; Bitrate="1024k"; PassthroughTag=$null;
-        Rule="DTSHD_Multichannel_Encode_1024k"; Priority=73
+        CodecRegex     = "^(dts)$"
+        Channels       = [ChannelFilter]::MoreThanTwo
+        ProfileRegex   = "HD|MA|HRA"
+        Action         = "Encode"
+        Bitrate        = "1024k"
+        PassthroughTag = $null
+        Rule           = "DTSHD_Multichannel_Encode_1024k"
+        Priority       = 73
     },
+    # Rule2: DTS Multichannel → Encode at 768k
     [PSCustomObject]@{
-        CodecRegex="^(dts)$"; Channels=[ChannelFilter]::MoreThanTwo; ProfileRegex=$null
-        Action="Encode"; Bitrate="768k"; PassthroughTag=$null;
-        Rule="DTS_Multichannel_Encode_768k"; Priority=72
+        CodecRegex     = "^(dts)$"
+        Channels       = [ChannelFilter]::MoreThanTwo
+        ProfileRegex   = $null
+        Action         = "Encode"
+        Bitrate        = "768k"
+        PassthroughTag = $null
+        Rule           = "DTS_Multichannel_Encode_768k"
+        Priority       = 72
     },
+    # Rule3: DTS-HD 2.0 → Encode at 384k
     [PSCustomObject]@{
-        CodecRegex="^(dts)$"; Channels=2; ProfileRegex="HD|MA|HRA"
-        Action="Encode"; Bitrate="384k"; PassthroughTag=$null;
-        Rule="DTSHD_2.0_Encode_384k"; Priority=71
+        CodecRegex     = "^(dts)$"
+        Channels       = 2
+        ProfileRegex   = "HD|MA|HRA"
+        Action         = "Encode"
+        Bitrate        = "384k"
+        PassthroughTag = $null
+        Rule           = "DTSHD_2.0_Encode_384k"
+        Priority       = 71
     },
+    # Rule4: DTS 2.0 → Encode at 256k
     [PSCustomObject]@{
-        CodecRegex="^(dts)$"; Channels=2; ProfileRegex=$null
-        Action="Encode"; Bitrate="256k"; PassthroughTag=$null;
-        Rule="DTS_2.0_Encode_256k"; Priority=70
+        CodecRegex     = "^(dts)$"
+        Channels       = 2
+        ProfileRegex   = $null
+        Action         = "Encode"
+        Bitrate        = "256k"
+        PassthroughTag = $null
+        Rule           = "DTS_2.0_Encode_256k"
+        Priority       = 70
     }
 )
 
 # PCM / FLAC FAMILY
 $Rules_PCMFLAC = @(
+    # Rule1: PCM/FLAC 7.1 → Downmix to 5.1 at 1024k
     [PSCustomObject]@{
-        CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=8
-        ProfileRegex=$null; Action="Downmix"; Bitrate="1024k"
-        PassthroughTag=$null; Rule="PCMFLAC_7.1_Downmix_1024k"; Priority=62
+        CodecRegex     = "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"
+        Channels       = 8
+        ProfileRegex   = $null
+        Action         = "Downmix"
+        Bitrate        = "1024k"
+        PassthroughTag = $null
+        Rule           = "PCMFLAC_7.1_Downmix_1024k"
+        Priority       = 62
     },
+    # Rule2: PCM/FLAC 5.1 → Encode at 768k
     [PSCustomObject]@{
-        CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=6
-        ProfileRegex=$null; Action="Encode"; Bitrate="768k"
-        PassthroughTag=$null; Rule="PCMFLAC_5.1_Encode_768k"; Priority=61
+        CodecRegex     = "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"
+        Channels       = 6
+        ProfileRegex   = $null
+        Action         = "Encode"
+        Bitrate        = "768k"
+        PassthroughTag = $null
+        Rule           = "PCMFLAC_5.1_Encode_768k"
+        Priority       = 61
     },
+    # Rule3: PCM/FLAC 2.0 → Encode at 384k
     [PSCustomObject]@{
-        CodecRegex="^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"; Channels=2
-        ProfileRegex=$null; Action="Encode"; Bitrate="384k"
-        PassthroughTag=$null; Rule="PCMFLAC_2.0_Encode_384k"; Priority=60
+        CodecRegex     = "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"
+        Channels       = 2
+        ProfileRegex   = $null
+        Action         = "Encode"
+        Bitrate        = "384k"
+        PassthroughTag = $null
+        Rule           = "PCMFLAC_2.0_Encode_384k"
+        Priority       = 60
     }
 )
 
@@ -183,13 +284,8 @@ $Rules_PCMFLAC = @(
 $AudioRules = $Rules_EAC3_Atmos + $Rules_TrueHD + $Rules_DTS + $Rules_AAC + $Rules_PCMFLAC
 
 # Priority sort
-$i = 0
-$AudioRules = $AudioRules |
-    ForEach-Object {
-        [PSCustomObject]@{ Rule = $_; Index = $i++ }
-    } |
-    Sort-Object { $_.Rule.Priority } -Descending |
-    ForEach-Object { $_.Rule }
+# Replaced ForEach-Object, identical result
+$AudioRules = $AudioRules | Sort-Object { $_.Priority } -Descending
 
 # Precompile regex = correct.
 $AudioRules = $AudioRules | Select-Object -Property *,
@@ -414,10 +510,9 @@ function Build-FFmpegCommand {
         elseif ($t.Downmix) {
             # --- 7.1 → 5.1 DOWNMIX PATH ---
             # (4) see header note
-            # Downmixes any 7.1 audio track to EAC3 (DD+ 5.1) using an ITU-R BS.775
-            # compliant pan matrix. Side surrounds (SL/SR) are folded into the rear
-            # channels (BL/BR) with -3 dB attenuation to preserve spatial balance.
-            # Dolby DRC is disabled, and the final output is encoded as DD+ 5.1.
+            # Downmixes 7.1 audio to EAC3 using ITU-R BS.775 matrix
+            # Side (SL/SR) are folded into the rear (BL/BR) with -3 dB attenuation
+            # Dolby DRC is disabled. Final output is encoded as DD+ 5.1.
             $panFilter = "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR"
 
             $ffArgs.AddRange([string[]](
@@ -444,7 +539,7 @@ function Build-FFmpegCommand {
         }
         else {
             # --- 5.1 RE-ENCODE PATH ---
-            # This block re-encodes any 5.1 audio track to EAC3 (DD+ 5.1).
+            # Re-encodes any 5.1 audio track to EAC3 (DD+ 5.1).
             # No downmixing occurs here — input must already be 5.1.
             # Dolby DRC is disabled. Loudness signaling handled by -dialnorm -31.
             $ffArgs.AddRange([string[]](
