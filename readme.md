@@ -71,7 +71,7 @@ It delivers solid surround quality without huge file sizes, making it a reliable
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ConvertAudioEngine.ps1 ".\YourMovie.mkv"
 ```
-### Dual-Stream Output Version
+### Keeps TrueHD 7.1 and AAC 7.1 audio version
 
 `ConvertAudioEngine-Keep71.ps1`
 1. Place `ConvertAudioEngine-Keep71.ps1`, `ffmpeg.exe`, and `ffprobe.exe` in the same folder.
