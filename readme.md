@@ -49,7 +49,7 @@ This script is a **true rule-based engine**, with safety, metadata integrity, an
 | Commentary detection & removal | ✔ | ✖ |
 | Clean, color-coded summary output | ✔ | ✖ |
 | Batch mode (folder processing) | ✖ | Sometimes |
-| Keeps original audio tracks | ✖ (deletes) | ✔ (keeps) |
+| Keeps original 7.1 audio tracks | ✔ Keep71.ps1 | ✔ (keeps) |
 
 ## Why DD+?
 
@@ -71,7 +71,15 @@ It delivers solid surround quality without huge file sizes, making it a reliable
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ConvertAudioEngine.ps1 ".\YourMovie.mkv"
 ```
+### Dual-Stream Output Version
 
+`ConvertAudioEngine-Keep71.ps1`
+1. Place `ConvertAudioEngine-Keep71.ps1`, `ffmpeg.exe`, and `ffprobe.exe` in the same folder.
+2. Run the script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ConvertAudioEngine-Keep71.ps1 ".\YourMovie.mkv"
+```
 The script will create a new file: YourMovie_Processed.mkv
 Note: The -ExecutionPolicy Bypass only applies to this single run and doesn't change your system settings.
 
