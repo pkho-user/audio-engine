@@ -15,10 +15,10 @@
 #      (TrueHD: Atmos metadata requires deep probe; AAC 7.1: same guard applies).
 #  (2) -avoid_negative_ts make_zero
 #      Clamps any negative initial PTS from 7.1 streams to zero.
-#  (3) -max_muxing_queue_size 9999
+#  (3) -max_muxing_queue_size 14000
 #      Pass+Copy creates three streams (video copy, 7.1 copy, 7.1→EAC3 encode).
 #      Two fast copy streams flood the muxer while the encode pipeline catches up;
-#      9999 provides the headroom needed to prevent de-sync on 3+ hour files.
+#      14000 provides the headroom needed to prevent de-sync on 3+ hour files.
 #      Applies to both TrueHD 7.1 and AAC 7.1 Pass+Copy paths.
 #  (4) aformat=channel_layouts=7.1 prepended to pan filter — TWO locations:
 #      A) Pass+Copy DDP 5.1 encode path B) Downmix path
@@ -496,7 +496,7 @@ function Build-FFmpegCommand {
         "-drc_scale",            "0",
         "-i",                    $InputFile,
         "-avoid_negative_ts",    "make_zero",    # clamps negative PTS from 7.1 streams to zero
-        "-max_muxing_queue_size","9999",         # Pass+Copy = 3 streams: video c, 7.1 p, EAC3 enc
+        "-max_muxing_queue_size","14000",        # Pass+Copy = 3 streams: video c, 7.1 p, EAC3 enc
         "-map",                  "0:v?",
         "-c:v",                  "copy",
         "-map_metadata",         "0",
