@@ -63,7 +63,7 @@ It delivers solid surround quality without huge file sizes, making it a reliable
 
 **Note:** The script relies on features and stability improvements introduced in FFmpeg 8.1, particularly for reliable EAC3, TrueHD, and DTS-HD parsing.
 
-## Quick Start
+### 7.1 Downmix to DD+ 5.1 (How to Run)
 
 1. Place `ConvertAudioEngine.ps1`, `ffmpeg.exe`, and `ffprobe.exe` in the same folder.
 2. Run the script:
