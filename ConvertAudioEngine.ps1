@@ -14,9 +14,9 @@
 #      Ensures 7.1 channel layout is fully parsed before encode starts
 #  (2) -avoid_negative_ts make_zero
 #      Clamps any negative initial PTS from TrueHD streams to zero.
-#  (3) -max_muxing_queue_size 9999
+#  (3) -max_muxing_queue_size 14000
 #      Large mux queue to prevent video starving audio pipeline
-#      9999 provides sufficient headroom for 3+ hour files.
+#      14000 provides sufficient headroom for 3+ hour files.
 #  (4) aformat=channel_layouts=7.1 prepended to downmix pan filter
 #      Pins the TrueHD decoder output to the canonical 7.1 layout
 #      (FL FR FC LFE BL BR SL SR) before the pan filter reads it.
@@ -486,7 +486,7 @@ function Build-FFmpegCommand {
         "-drc_scale",           "0",
         "-i",                   $InputFile,
         "-avoid_negative_ts",   "make_zero",    # clamps negative TrueHD PTS to zero
-        "-max_muxing_queue_size","9999",        # stops video flooding mux queue when audio is slow
+        "-max_muxing_queue_size","14000",       # stops video flooding mux queue when audio is slow
         "-map",                 "0:v?",
         "-c:v",                 "copy",
         "-map_metadata",        "0",
