@@ -6,7 +6,6 @@
 #  EAC3/TrueHD 5.1 passthrough; other 5.1 tracks re-encoded (768k)
 #  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
 #  Priority Mapping (default 0-100)
-#  Run: ffmpeg -h encoder=eac3 to see available options
 #  5.1 audio downmix using Pan Filter for channel mapping
 #
 #  De-sync for TrueHD 7.1 / long-duration files:
