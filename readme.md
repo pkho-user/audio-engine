@@ -65,7 +65,7 @@ It delivers solid surround quality without huge file sizes, making it a reliable
 
 ### 7.1 Downmix to DD+ 5.1 (How to Run)
 
-1. Place `ConvertAudioEngine-DDP51.ps1`, `ffmpeg.exe`, and `ffprobe.exe` in the same folder.
+1. Place **`ConvertAudioEngine-DDP51.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
 2. Run the script:
 
 ```powershell
@@ -74,14 +74,14 @@ powershell -ExecutionPolicy Bypass -File .\ConvertAudioEngine-DDP51.ps1 ".\YourM
 ### Keeps TrueHD 7.1 and AAC 7.1 audio version
 
 `ConvertAudioEngine-Keep71.ps1`
-1. Place `ConvertAudioEngine-Keep71.ps1`, `ffmpeg.exe`, and `ffprobe.exe` in the same folder.
+1. Place **`ConvertAudioEngine-Keep71.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
 2. Run the script:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ConvertAudioEngine-Keep71.ps1 ".\YourMovie.mkv"
 ```
-The script will create a new file: YourMovie_Processed.mkv
-Note: The -ExecutionPolicy Bypass only applies to this single run and doesn't change your system settings.
+The script will create a new file: YourMovie_Processed.mkv  
+ℹ️ Note: The -ExecutionPolicy Bypass only applies to this single run and doesn't change your system settings.
 
 ## How It Decides What to Do
 
