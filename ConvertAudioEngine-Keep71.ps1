@@ -7,7 +7,8 @@
 #  All other tracks over 5.1 are downmixed to DDP 5.1 (1024k)
 #  Audio tracks at 5.1 are re-encoded (768k)
 #  Priority Mapping (default 0-110)
-#  5.1 audio downmix using pan filter for channel mapping
+#  5.1 audio downmix using Pan Filter for channel mapping with peak limiter
+#  alimiter set to: (.948) changed from (.95)
 #
 #  De-sync for TrueHD 7.1 / AAC 7.1 / long-duration files:
 #  (1) analyzeduration + probesize raised 100M → 200M
@@ -17,7 +18,7 @@
 #      Clamps any negative initial PTS from 7.1 streams to zero.
 #  (3) -max_muxing_queue_size 14000
 #      Pass+Copy creates three streams (video copy, 7.1 pass, 7.1→EAC3 encode).
-#      One copy (video) and one pass (7.1 audio) stream flood the muxer
+#      One copy (video) and one pass (7.1 audio) streams flood the muxer
 #      while the encode pipeline catches up; 14000 provides the headroom needed
 #      to prevent de-sync on 3+ hour files. (applies to both TrueHD 7.1, AAC 7.1)
 #  (4) aformat=channel_layouts=7.1 prepended to pan filter — TWO locations:
@@ -536,10 +537,10 @@ function Build-FFmpegCommand {
 
             # --- 2. Duplicate as DDP 5.1 ---
             # (4) see header note
-            #
+            # alimiter catches post-pan peaks exceeding 0 dBFS (attack=5ms, release=50ms)
             $ffArgs.AddRange([string[]](
                 "-map","0:$($t.RealIndex)",
-                "-filter:a:$i", "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR",
+                "-filter:a:$i", "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled",
                 "-c:a:$i","eac3",
                 "-b:a:$i",$t.Bitrate,
                 "-dialnorm","-31",
@@ -560,7 +561,7 @@ function Build-FFmpegCommand {
             # compliant pan matrix. Side surrounds (SL/SR) are folded into the rear
             # channels (BL/BR) with -3 dB attenuation to preserve spatial balance.
             # Dolby DRC is disabled, and the final output is encoded as DD+ 5.1.
-            $panFilter = "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR"
+            $panFilter = "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled"
 
             $ffArgs.AddRange([string[]](
                 "-filter:a:$i", $panFilter,

@@ -1,12 +1,13 @@
 # ========================================================================
-#  ConvertAudioEngine-DDP51.ps1 — (Version 1.vn) Production-daily use
+#  ConvertAudioEngine-DDP51 — (Version 1.vn) Production-daily use
 #  PowerShell 5.1 + 7.5 Compatible
 #  FFmpeg 8.1 Compatible
 #  Audio tracks over 5.1 are downmixed (1024k)
 #  EAC3/TrueHD 5.1 passthrough; other 5.1 tracks re-encoded (768k)
 #  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
 #  Priority Mapping (default 0-100)
-#  5.1 audio downmix using Pan Filter for channel mapping
+#  5.1 audio downmix using Pan Filter for channel mapping with peak limiter
+#  alimiter set to (.948) changed from (.95)
 #
 #  De-sync for TrueHD 7.1 / long-duration files:
 #  (1) Increase analyzeduration/probesize to 200M for full layout detection
@@ -509,10 +510,11 @@ function Build-FFmpegCommand {
         elseif ($t.Downmix) {
             # --- 7.1 → 5.1 DOWNMIX PATH ---
             # (4) see header note
+            # Dolby DRC is disabled. Final output is encoded as DD+ 5.1.
             # Downmixes 7.1 audio to EAC3 using ITU-R BS.775 matrix
             # Side (SL/SR) are folded into the rear (BL/BR) with -3 dB attenuation
-            # Dolby DRC is disabled. Final output is encoded as DD+ 5.1.
-            $panFilter = "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR"
+            # alimiter catches post-pan peaks exceeding 0 dBFS (attack=5ms, release=50ms)
+            $panFilter = "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled"
 
             $ffArgs.AddRange([string[]](
                 "-filter:a:$i", $panFilter,
