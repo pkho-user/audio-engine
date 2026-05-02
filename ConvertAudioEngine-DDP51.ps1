@@ -564,7 +564,7 @@ function Build-FFmpegCommand {
 
     $ffArgs.AddRange([string[]]("-map","0:s?","-c:s","copy"))
     $outDir  = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($InputFile))
-    $outName = [System.IO.Path]::GetFileNameWithoutExtension($InputFile) + "_Processed.mkv"
+    $outName = [System.IO.Path]::GetFileNameWithoutExtension($InputFile) + "_ddp5only.mkv"
     $ffArgs.Add([System.IO.Path]::Combine($outDir, $outName))
 
     return $ffArgs
