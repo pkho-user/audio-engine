@@ -1,4 +1,4 @@
-# Audio Conversion Engine — DDP 5.1 & Keep 7.1
+# Converts 7.1 audio tracks to DDP 5.1
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-7.6-blue)
 ![Repo Size](https://img.shields.io/github/repo-size/pkho-user/audio-engine)
