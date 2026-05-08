@@ -26,10 +26,10 @@ Designed for home theater users who want clean, consistent audio without writing
 
 | Script | Purpose |
 |--------|---------|
-| `ConvertAudioEngine-DDP51.ps1` | Converts all audio to DDP 5.1 — passthrough, downmix, or re-encode depending on source |
-| `ConvertAudioEngine-Keep71.ps1` | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
-| `AudioRemove-AC3.ps1` | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
-| `AudioPeakRMSChecker.ps1` | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
+| **ConvertAudioEngine-DDP51.ps1** | Converts all audio to DDP 5.1 — passthrough, downmix, or re-encode depending on source |
+| **ConvertAudioEngine-Keep71.ps1** | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
+| **AudioRemove-AC3.ps1** | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
+| **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
 
 ---
 
@@ -48,7 +48,7 @@ pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine-DDP51.ps1 ".\YourMovie.m
 pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine-Keep71.ps1 ".\YourMovie.mkv"
 ```
 
-> The `-ExecutionPolicy Bypass` flag only applies to this single run and does not change your system settings.
+> The **-ExecutionPolicy Bypass** flag only applies to this single run and does not change your system settings.
 
 ### macOS / Linux
 
@@ -73,8 +73,8 @@ pwsh -File ./ConvertAudioEngine-Keep71.ps1 "./YourMovie.mkv"
 
 | Script | Output |
 |--------|--------|
-| `ConvertAudioEngine-DDP51.ps1` | `YourMovie_ddp5only.mkv` |
-| `ConvertAudioEngine-Keep71.ps1` | `YourMovie_keep71mix.mkv` |
+| **`ConvertAudioEngine-DDP51.ps1`** | `YourMovie_ddp5only.mkv` |
+| **`ConvertAudioEngine-Keep71.ps1`** | `YourMovie_keep71mix.mkv` |
 
 If an output file already exists, it will be overwritten automatically.
 
