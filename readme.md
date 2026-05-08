@@ -14,6 +14,8 @@ Designed for home theater users who want clean, consistent audio without writing
 
 **Note:** The script relies on features and stability improvements introduced in FFmpeg 8.1, particularly for reliable EAC3, TrueHD, and DTS-HD parsing.
 
+#### Usage (macOS/Linux): pwsh -File ./ConvertAudioEngine-DDP51.ps1 "./YourMovie.mkv"
+
 ## Quick Start
 
 1. Place **`ConvertAudioEngine-DDP51.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
