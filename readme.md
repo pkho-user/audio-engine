@@ -16,11 +16,11 @@ Designed for home theater users who want clean, consistent audio without writing
 
 ## Quick Start
 
-1. Place **`ConvertAudioEngine.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
+1. Place **`ConvertAudioEngine-DDP51.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
 2. Run the script:
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine.ps1 ".\YourMovie.mkv"
+pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine-DDP51.ps1 ".\YourMovie.mkv"
 ```
 
 The script will create a new file:  
