@@ -14,11 +14,6 @@ Designed for home theater users who want clean, consistent audio without writing
 
 **Note:** The script relies on features and stability improvements introduced in FFmpeg 8.1, particularly for reliable EAC3, TrueHD, and DTS-HD parsing.
 
-That note was just explaining that when you call the script, you pass the path in the normal way for your OS:
-
-Windows: .\AudioPeakRMSChecker.ps1 "C:\Movies\film.mkv"
-macOS/Linux: ./AudioPeakRMSChecker.ps1 "/home/user/movies/film.mkv"
-
 ## Quick Start
 
 1. Place **`ConvertAudioEngine.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
