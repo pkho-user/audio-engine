@@ -1,5 +1,5 @@
 # ============================================================
-# Script     : AudioRemove-AC3.ps1 — (Version 2.9)
+# Script     : AudioRemove-AC3.ps1 — (Version 3.0)
 # Overview   : Pure remux (no re-encode).
 #
 # Purpose    : Remove all AC3 and E-AC3 audio streams (typically low-bitrate).
@@ -12,7 +12,8 @@
 #              all attachment streams (fonts, cover art).
 # Drops      : non-English subtitles.
 #
-# Usage      : pwsh -ExecutionPolicy Bypass -File .\AudioRemove-AC3.ps1 ".\YourMovie.mkv"
+# Usage (Windows)     : pwsh -ExecutionPolicy Bypass -File .\AudioRemove-AC3.ps1 ".\YourMovie.mkv"
+# Usage (macOS/Linux) : pwsh -File ./AudioRemove-AC3.ps1 "./YourMovie.mkv"
 #
 # Output     : Creates "YourMovie_remux.mkv" in the same folder.
 #              Will NOT overwrite existing files.
@@ -42,6 +43,9 @@ $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg$ext"
 foreach ($bin in $ffprobe, $ffmpeg) {
     if (-not (Test-Path -LiteralPath $bin)) {
         throw "Missing required binary: $bin"
+    }
+    if (-not $IsWindows -and -not ((Get-Item -LiteralPath $bin).UnixFileMode -band [System.IO.UnixFileMode]::UserExecute)) {
+        throw "Binary not executable: $bin — run: chmod +x `"$bin`""
     }
 }
 
