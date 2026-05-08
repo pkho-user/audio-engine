@@ -1,59 +1,93 @@
-# Converts 7.1 audio tracks to DDP 5.1
-> **Downmix is only used for sources with more than 5.1 channels.  
-> Audio 5.1 sources are only re-encoded.  
-> Supports TrueHD, DTS-HD, DTS Core, AAC, PCM, and FLAC.  
-> No video re-encode — video is always passed through untouched.**
+# Audio Conversion Engine — DDP 5.1 & Keep 7.1
+
+![PowerShell](https://img.shields.io/badge/PowerShell-7.6-blue)
+![Repo Size](https://img.shields.io/github/repo-size/pkho-user/audio-engine)
+
+> **Downmix is only used for sources with more than 5.1 channels.**  
+> **Audio 5.1 sources are only re-encoded.**  
+> **Supports TrueHD, DTS-HD, DTS Core, AAC, PCM, and FLAC.**  
+> **No video re-encode — video is always passed through untouched.**
 
 Designed for home theater users who want clean, consistent audio without writing complex FFmpeg commands.
+
+---
 
 ## Requirements
 
 - **PowerShell 7.6**
-- **FFmpeg 8.1 or newer** — Must be in your PATH or the same folder as the script. You can grab the latest builds from the official FFmpeg download page. **https://ffmpeg.org/download.html**
-- **Runs on:** Windows 11, MacOS, Linux
+- **FFmpeg 8.1 or newer** — Place `ffmpeg` and `ffprobe` in the same folder as the script. You can grab the latest builds from the official FFmpeg download page: **https://ffmpeg.org/download.html**
+- **Runs on:** Windows 10/11, macOS, Linux
 
-**Note:** The script relies on features and stability improvements introduced in FFmpeg 8.1, particularly for reliable EAC3, TrueHD, and DTS-HD parsing.
+> **Note:** The scripts rely on features and stability improvements introduced in FFmpeg 8.1, particularly for reliable EAC3, TrueHD, and DTS-HD parsing.
 
-#### Usage (macOS/Linux): pwsh -File ./ConvertAudioEngine-DDP51.ps1 "./YourMovie.mkv"
+---
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `ConvertAudioEngine-DDP51.ps1` | Converts all audio to DDP 5.1 — passthrough, downmix, or re-encode depending on source |
+| `ConvertAudioEngine-Keep71.ps1` | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
+| `AudioRemove-AC3.ps1` | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
+| `AudioPeakRMSChecker.ps1` | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
+
+---
 
 ## Quick Start
 
-1. Place **`ConvertAudioEngine-DDP51.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
-2. Run the script:
+### Windows11
+
+1. Place the script, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
+2. Run:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine-DDP51.ps1 ".\YourMovie.mkv"
 ```
 
-The script will create a new file:  
-- ConvertAudioEngine-DDP51.ps1 → YourMovie_ddp5only.mkv  
-- ConvertAudioEngine-Keep71.ps1 → YourMovie_keep71mix.mkv  
-
-Note: The -ExecutionPolicy Bypass only applies to this single run and doesn't change your system settings.
-
-### Dual-Stream Output Version
-
-`ConvertAudioEngine-Keep71.ps1`
-1. Place **`ConvertAudioEngine-Keep71.ps1`**, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
-2. Run the script:
-
 ```powershell
 pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine-Keep71.ps1 ".\YourMovie.mkv"
 ```
 
-* **Original Track Preservation**: Retains the original, high-definition **TrueHD 7.1** or **AAC 7.1** source tracks.
-* **Secondary Track**: Creates a second, highly compatible **DDP 5.1 (1024k)** downmix copy.
+> The `-ExecutionPolicy Bypass` flag only applies to this single run and does not change your system settings.
 
-## Comparison — This Audio Script vs. Typical FFmpeg/PowerShell Scripts
+### macOS / Linux
+
+1. Place the script, **`ffmpeg`**, and **`ffprobe`** in the same folder.
+2. Make the binaries executable (first time only):
+
+```bash
+chmod +x ffmpeg ffprobe
+```
+
+3. Run:
+
+```powershell
+pwsh -File ./ConvertAudioEngine-DDP51.ps1 "./YourMovie.mkv"
+```
+
+```powershell
+pwsh -File ./ConvertAudioEngine-Keep71.ps1 "./YourMovie.mkv"
+```
+
+### Output filenames
+
+| Script | Output |
+|--------|--------|
+| `ConvertAudioEngine-DDP51.ps1` | `YourMovie_ddp5only.mkv` |
+| `ConvertAudioEngine-Keep71.ps1` | `YourMovie_keep71mix.mkv` |
+
+If an output file already exists, it will be overwritten automatically.
+
+## Comparison — This Audio Scripts vs. Typical FFmpeg/PowerShell Scripts
 
 | Feature / Capability | This Engine | Typical GitHub Scripts |
-|----------------------|-------------|-------------------------|
+|----------------------|-------------|------------------------|
 | **De-sync Protection** | ✔ | ✖ |
 | **Sync-Stability System** | ✔ | ✖ |
 | **PTS Correction** | ✔ | ✖ |
 | **Mux-Queue Protection** | ✔ | ✖ |
-| **No video re‑encode** | ✔ | Sometimes broken |
-| **TrueHD 5.1 passthrough** | ✔ | ✖ (often re‑encodes) |
+| **No video re-encode** | ✔ | Sometimes broken |
+| **TrueHD 5.1 passthrough** | ✔ | ✖ (often re-encodes) |
 | **EAC3 Atmos (JOC) passthrough** | ✔ | ✖ |
 | **EAC3 5.1 / 2.0 passthrough** | ✔ | ✖ |
 | **DTS-HD MA/HRA detection (1024k)** | ✔ | ✖ |
@@ -68,47 +102,88 @@ pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine-Keep71.ps1 ".\YourMovie.
 | Clean metadata preservation | ✔ | Partial |
 | Language tag preservation | ✔ | ✖ |
 | Subtitle & chapter passthrough | ✔ | Partial |
+| MKV attachment passthrough (fonts, cover art) | ✔ | ✖ |
 | Consistent output naming | ✔ | ✖ |
 | Adjustable audio bitrates | ✔ | ✖ |
 | Add new codecs easily | ✔ | ✖ |
 | Commentary detection & removal | ✔ | ✖ |
+| Safe Peak Normalizer (SPN) | ✔ | ✖ |
 | Clean, color-coded summary output | ✔ | ✖ |
+| Cross-platform (Windows, macOS, Linux) | ✔ | Rarely |
 | Batch mode (folder processing) | ✖ | Sometimes |
 
+---
 
 ## Why DD+?
 
-EAC3 (DD+) plays nicely with almost everything — TVs, Soundbars, Streaming boxes, and Headphones.  
+EAC3 (DD+) plays nicely with almost everything — TVs, soundbars, streaming boxes, and headphones.  
 It delivers solid surround quality without huge file sizes, making it a reliable format that works on virtually every device.
+
+---
 
 ## How It Decides What to Do
 
-| Original Format          | Channels | Action                          | Output                          |
-|--------------------------|----------|---------------------------------|---------------------------------|
-| EAC3 Atmos (JOC)         | Any      | Passthrough                     | Unchanged                       |
-| EAC3                     | 5.1      | Passthrough                     | Unchanged                       |
-| EAC3                     | 2.0      | Passthrough                     | Unchanged                       |
-| TrueHD                   | 5.1      | Passthrough                     | Unchanged                       |
-| TrueHD                   | 7.1      | Downmix                         | EAC3 5.1 @ 1024k                |
-| DTS-HD MA / DTS-HRA      | >2       | Encode                          | EAC3 5.1 @ 1024k                |
-| DTS Core                 | >2       | Encode                          | EAC3 5.1 @ 768k                 |
-| AAC / PCM / FLAC         | 7.1      | Downmix                         | EAC3 5.1 @ 1024k                |
-| AAC / PCM / FLAC         | 5.1      | Encode                          | EAC3 5.1 @ 768k                 |
-| AAC                      | 2.0      | Encode                          | EAC3 2.0 @ 256k                 |
-| PCM / FLAC               | 2.0      | Encode                          | EAC3 2.0 @ 384k                 |
-| Stereo + commentary title| 2.0      | Remove                          | —                             |
+| Original Format | Channels | Action | Output |
+|-----------------|----------|--------|--------|
+| EAC3 Atmos (JOC) | Any | Passthrough | Unchanged |
+| EAC3 | 5.1 | Passthrough | Unchanged |
+| EAC3 | 2.0 | Passthrough | Unchanged |
+| TrueHD | 5.1 | Passthrough | Unchanged |
+| TrueHD | 7.1 | Downmix | EAC3 5.1 @ 1024k |
+| DTS-HD MA / DTS-HRA | >2 | Encode | EAC3 5.1 @ 1024k |
+| DTS Core | >2 | Encode | EAC3 5.1 @ 768k |
+| AAC / PCM / FLAC | 7.1 | Downmix | EAC3 5.1 @ 1024k |
+| AAC / PCM / FLAC | 5.1 | Encode | EAC3 5.1 @ 768k |
+| AAC | 2.0 | Encode | EAC3 2.0 @ 256k |
+| PCM / FLAC | 2.0 | Encode | EAC3 2.0 @ 384k |
+| Stereo + commentary title | 2.0 | Remove | — |
 
 If something doesn't match any rule, it falls back to sensible defaults.
 
+---
+
 ## Customization
 
-You can easily tweak these in the script:  
-**CommentaryKeywords** Add or remove words that trigger removal  
-**Audio rule groups** (`$Rules_AAC`, `$Rules_DTS`, etc.) — Adjust bitrates, add new codecs, or change behavior for each codec family.  
-**ThreadCount** — Performance Tuning. The script defaults to 8 threads for processing. If you have a high-end CPU, you can adjust the ThreadCount variable from **4 to 16.  
-**ScanThrottle** — Limits how many peak-scan tasks run at the same time. Recommened values: **1 to 4
+You can tweak these settings directly in the script:
+
+- **`CommentaryKeywords`** — Add or remove words that trigger commentary track removal.
+- **Audio rule groups** (`$Rules_AAC`, `$Rules_DTS`, etc.) — Adjust bitrates, add new codecs, or change behavior per codec family.
+- **`ThreadCount`** — Performance tuning. Defaults to 8 threads. Adjustable from **4 to 16**.
+- **`ScanThrottle`** — Limits how many peak-scan tasks run simultaneously. Recommended values: **1 to 4**. Use 1 for spinning disks, up to 4 for SSD/NVMe.
+
+---
+
+## Utility Scripts
+
+### AudioRemove-AC3.ps1
+
+Removes all low-bitrate AC3 and E-AC3 audio streams from an MKV, producing a lean master file containing only high-fidelity audio (TrueHD / AAC 7.1 / DTS-HD MA). Run this before the conversion engine if your source contains low-bitrate AC3 compatibility tracks you want to strip first.
+
+```powershell
+# Windows
+pwsh -ExecutionPolicy Bypass -File .\AudioRemove-AC3.ps1 ".\YourMovie.mkv"
+
+# macOS / Linux
+pwsh -File ./AudioRemove-AC3.ps1 "./YourMovie.mkv"
+```
+
+Output: `YourMovie_remux.mkv`
+
+### AudioPeakRMSChecker.ps1
+
+Validates audio levels on source and converted tracks. Reports peak level dB, RMS level dB, crest factor, and peak count — with PASS/FAIL evaluation per track. Useful for confirming the conversion engine produced clean, properly leveled output.
+
+```powershell
+# Windows
+pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
+
+# macOS / Linux
+pwsh -File ./AudioPeakRMSChecker.ps1 "./YourMovie.mkv"
+```
+
+---
 
 ## Disclaimer
 
-Always test it on a few files first before running it on your whole library.  
+Always test on a few files first before running on your whole library.  
 Always keep backups of your original files.
