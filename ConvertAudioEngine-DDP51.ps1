@@ -1,7 +1,8 @@
 # ========================================================================
-#  ConvertAudioEngine-DDP51 — (Version 1.vn) Production-daily use
-#  PowerShell 5.1 + 7.5 Compatible
+#  ConvertAudioEngine-DDP51 — (Version 2.9.6) Production-daily use
+#  PowerShell 7.6 Required
 #  FFmpeg 8.1 Compatible
+#
 #  Audio tracks over 5.1 are downmixed (1024k)
 #  EAC3/TrueHD 5.1 passthrough; other 5.1 tracks re-encoded (768k)
 #  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
@@ -21,26 +22,47 @@
 #      Pins the TrueHD decoder output to the canonical 7.1 layout
 #      (FL FR FC LFE BL BR SL SR) before the pan filter reads it.
 #      Guards against Atmos decoder output layout ambiguity.
+#  Added Safe Peak Normalizer (SPN)
 # ========================================================================
+#Requires -Version 7.6
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory)]
     [string]$InputFile
 )
 
 # ========================================
 #  ENGINE: GLOBAL SETTINGS
 # ========================================
-$ThreadCount = 8 # User‑adjustable (4–16).
-$CommentaryKeywords = @("commentary","director","producer","writer","cast","behind","bonus","alt","interview")
+$ThreadCount     = 8    # User-adjustable (4-16).
+if ($ThreadCount -lt 4 -or $ThreadCount -gt 16) { throw "ThreadCount must be between 4 and 16." }
+$ScanThrottle    = [Math]::Max(1, [int]([Environment]::ProcessorCount / $ThreadCount))
+                        # Parallel SPN scan concurrency limit.
+                        # Formula: ProcessorCount / ThreadCount (prevents CPU saturation).
+                        # SSD/NVMe: safe to override up to 4. Spinning disk: keep at 1.
+$PeakThresholdDB = -0.5 # SPN: loudnorm triggers when source peak exceeds this (dBFS)
+$CommentaryPattern = [regex]::new(
+    'commentary|director|producer|writer|cast|behind|bonus|alt|interview',
+    'IgnoreCase,Compiled'
+)
 
-$ffprobe = Join-Path $PSScriptRoot "ffprobe.exe"
-$ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
+if ($IsWindows) {
+    $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
+    $ffprobe = Join-Path $PSScriptRoot "ffprobe.exe"
+}
+else {
+    $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg"
+    $ffprobe = Join-Path $PSScriptRoot "ffprobe"
+}
 
 foreach ($bin in $ffprobe, $ffmpeg) {
-    if (-not (Test-Path $bin)) {
+    if (-not (Test-Path -LiteralPath $bin)) {
         Write-Error "Missing required binary: $bin"
+        exit 1
+    }
+    if (-not $IsWindows -and -not ((Get-Item -LiteralPath $bin).UnixFileMode -band [System.IO.UnixFileMode]::UserExecute)) {
+        Write-Error "Binary not executable: $bin — run: chmod +x `"$bin`""
         exit 1
     }
 }
@@ -71,7 +93,7 @@ class ChannelFilter {
             "eq" { return $channels -eq $this.Value }
             default { throw "Unknown ChannelFilter op: $($this.Op)" }
         }
-        return $false  # Unreachable — satisfies PS 5.1 class method return-path analysis
+        return $false  # This notes the line is unreachable but required for PS7.6 return‑path validation.
     }
 
     static [ChannelFilter] $MoreThanTwo = [ChannelFilter]::new("gt", 2)
@@ -284,16 +306,15 @@ $Rules_PCMFLAC = @(
 $AudioRules = $Rules_EAC3_Atmos + $Rules_TrueHD + $Rules_DTS + $Rules_AAC + $Rules_PCMFLAC
 
 # Priority sort
-# Replaced ForEach-Object, identical result
 $AudioRules = $AudioRules | Sort-Object { $_.Priority } -Descending
 
-# Precompile regex = correct.
+# Precompile regex
 $AudioRules = $AudioRules | Select-Object -Property *,
     @{ Name='CodecRegexObj';   Expression={
-        if ($_.CodecRegex)   { [regex]::new($_.CodecRegex,   'IgnoreCase') } else { $null }
+        $_.CodecRegex   ? [regex]::new($_.CodecRegex,   'IgnoreCase,Compiled') : $null
     }},
     @{ Name='ProfileRegexObj'; Expression={
-        if ($_.ProfileRegex) { [regex]::new($_.ProfileRegex, 'IgnoreCase') } else { $null }
+        $_.ProfileRegex ? [regex]::new($_.ProfileRegex, 'IgnoreCase,Compiled') : $null
     }}
 
 # ==========================
@@ -313,9 +334,11 @@ function Get-AudioStreams {
     if (-not $raw) {
         throw "ffprobe returned no output. Check the input file: $File"
     }
-    try { return ($raw | ConvertFrom-Json).streams }
+    try {
+        return ($raw | ConvertFrom-Json).streams
+    }
     catch {
-        throw "Failed to parse ffprobe JSON: $_"
+        throw "Failed to parse ffprobe JSON: $($_.Exception.Message)"
     }
 }
 
@@ -323,15 +346,13 @@ function Get-AudioStreams {
 #  COMMENTARY DETECTOR
 # ===========================
 function Test-IsCommentary {
-    param($Channels, $Title)
+    param(
+        [int]    $Channels,
+        [string] $Title
+    )
 
     if ($Channels -ne 2 -or -not $Title) { return $false }
-
-    $lower = $Title.ToLower()
-    foreach ($kw in $script:CommentaryKeywords) {
-        if ($lower -match $kw) { return $true }
-    }
-    return $false
+    return $script:CommentaryPattern.IsMatch($Title)
 }
 
 # ===========================
@@ -354,11 +375,11 @@ function Resolve-AudioRule {
         }
 
         if ($r.ProfileRegexObj) {
-            $match = $false
-            if ($Profile -and $r.ProfileRegexObj.IsMatch($Profile)) { $match = $true }
-            if (-not $match -and $Title   -and $r.ProfileRegexObj.IsMatch($Title))   { $match = $true }
-            if (-not $match -and $Handler -and $r.ProfileRegexObj.IsMatch($Handler)) { $match = $true }
-            if (-not $match) { continue }
+            if (-not (
+                ($Profile -and $r.ProfileRegexObj.IsMatch($Profile)) -or
+                ($Title   -and $r.ProfileRegexObj.IsMatch($Title))   -or
+                ($Handler -and $r.ProfileRegexObj.IsMatch($Handler))
+            )) { continue }
         }
 
         return $r
@@ -373,8 +394,14 @@ function Resolve-AudioRule {
 function Convert-AudioTracks {
     param($Streams)
 
-    $Processed = [System.Collections.Generic.List[object]]::new()
+    $Processed  = [System.Collections.Generic.List[object]]::new()
     $TrackIndex = 0
+
+    # ----------------------------------------------------------------
+    # PHASE A - Sequential
+    # NeedsSpnScan marks which tracks must run a peak scan during the parallel Phase B stage.
+    # ----------------------------------------------------------------
+    $PendingTracks = [System.Collections.Generic.List[object]]::new()
 
     foreach ($s in $Streams) {
 
@@ -382,14 +409,19 @@ function Convert-AudioTracks {
         $Channels = [int]$s.channels
         $Profile  = $s.profile
 
-        $Title    = if ($s.tags) { $s.tags.title } else { $null }
-        $Lang     = if ($s.tags -and $s.tags.language) { $s.tags.language } else { "eng" }
-        $Handler  = if ($s.tags) { $s.tags.handler_name } else { $null }
+        $Title    = $s.tags?.title
+        $Lang     = if ($s.tags?.language) { $s.tags.language } else { "eng" }
+        $Handler  = $s.tags?.handler_name
 
         $RealIndex = $s.index
         $Rule = $null
 
         # --- Malformed Layout Guards (include 7ch) ---
+        # DO NOT REMOVE — these guards correct invalid 7ch layouts reported by several decoders.
+        # AAC 7ch layouts are malformed and forced to 6ch for correct rule matching.
+        # EAC3 7ch layouts are invalid and remapped to 6ch before processing.
+        # TrueHD never reports seven channels, so 7ch is corrected to the canonical 8ch layout.
+        # PCM and FLAC 7ch layouts are corrected to 8ch to match canonical decoder output behavior.
         if ($Codec -eq "aac" -and $Channels -eq 7) {
             $Channels = 6
             $Rule = "AAC_MalformedLayout_Guard"
@@ -412,12 +444,13 @@ function Convert-AudioTracks {
 
         # --- Commentary removal ---
         if (Test-IsCommentary -Channels $Channels -Title $Title) {
-            $Processed.Add([PSCustomObject]@{
+            $PendingTracks.Add([PSCustomObject]@{
                 Index=$TrackIndex; RealIndex=$RealIndex; Codec=$Codec; Channels=$Channels
                 Profile=$Profile; Title=$Title; Language=$Lang
                 Action="Removed"; Passthrough=$false; Downmix=$false
                 Bitrate=$null; PassthroughTag=$null; Output="Commentary"
                 Rule="Commentary_Removed"; Priority=0
+                NeedsNormalization=$false; NeedsSpnScan=$false
             })
             $TrackIndex++; continue
         }
@@ -435,9 +468,9 @@ function Convert-AudioTracks {
             if (-not $Rule) { $Rule = $match.Rule }
         }
         else {
-            if ($Channels -le 2)      { $Action="Encode"; $Bitrate="256k";  $Rule="Fallback_2.0_256k" }
+            if ($Channels -le 2)      { $Action="Encode";  $Bitrate="256k";  $Rule="Fallback_2.0_256k" }
             elseif ($Channels -gt 6)  { $Action="Downmix"; $Bitrate="1024k"; $Rule="Fallback_7.1_1024k" }
-            else                      { $Action="Encode"; $Bitrate="768k";  $Rule="Fallback_5.1_768k" }
+            else                      { $Action="Encode";  $Bitrate="768k";  $Rule="Fallback_5.1_768k" }
             $Passthrough=$false; $Downmix=($Action -eq "Downmix"); $Tag=$null; $Priority=0
         }
 
@@ -446,31 +479,145 @@ function Convert-AudioTracks {
             Write-Warning ("Track {0} ({1}): 6ch rule had 1024k-clamped to 768k." -f $TrackIndex,$Codec)
             $Bitrate = "768k"
         }
+        elseif ($Channels -eq 7 -and $Bitrate -eq "768k") {
+            Write-Warning ("Track {0} ({1}): 7ch rule had 768k-clamped to 1024k." -f $TrackIndex,$Codec)
+            $Bitrate = "1024k"
+        }
         elseif ($Channels -eq 8 -and $Bitrate -eq "768k") {
             Write-Warning ("Track {0} ({1}): 8ch rule had 768k-clamped to 1024k." -f $TrackIndex,$Codec)
             $Bitrate = "1024k"
         }
 
-        $Processed.Add([PSCustomObject]@{
+        $PendingTracks.Add([PSCustomObject]@{
             Index=$TrackIndex; RealIndex=$RealIndex; Codec=$Codec; Channels=$Channels
             Profile=$Profile; Title=$Title; Language=$Lang; Action=$Action
             Passthrough=$Passthrough; Downmix=$Downmix; Bitrate=$Bitrate
             PassthroughTag=$Tag; Output=""; Rule=$Rule; Priority=$Priority
+            NeedsNormalization=$false
+            NeedsSpnScan=($Action -ne "Passthrough" -and $Action -ne "Removed")
         })
 
         $TrackIndex++
     }
 
+    # -------------------------------------------------------------------
+    # PHASE B - Parallel SPN peak scans 
+    # Parallel runspaces cannot access script scope and require explicit captures.
+    # The peak scan logic is inlined because helper functions cannot run inside runspaces.
+    # Peak results are stored in a concurrent dictionary keyed by each track’s real index.
+    # Scan messages are stored in a concurrent bag that preserves thread-safe collection behavior.
+    # No Write-Host calls are allowed inside the parallel block to avoid runspace output issues.
+    # No pending-track mutations are allowed inside the parallel block to prevent race conditions.
+    # All shared state changes occur only after Phase B completes in the sequential merge stage.
+    # -------------------------------------------------------------------
+    $spnCount = @($PendingTracks | Where-Object { $_.NeedsSpnScan }).Count
+    if ($spnCount -gt 0) {
+        Write-Host "[SPN] Peak scanning $spnCount track(s) — may take a few minutes..." -ForegroundColor Cyan
+    }
+
+    $PeakResults = [System.Collections.Concurrent.ConcurrentDictionary[int,object]]::new()
+    $ScanOutput  = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
+
+    $throttleLimit = $ScanThrottle  # Local capture — $using: not valid on -ThrottleLimit parameter
+    $PendingTracks | Where-Object { $_.NeedsSpnScan } | ForEach-Object -Parallel {
+
+        $t           = $_
+        $ffmpegBin   = $using:ffmpeg
+        $threadCount = $using:ThreadCount
+        $threshold   = $using:PeakThresholdDB
+        $inputFile   = $using:InputFile
+        $peakDict    = $using:PeakResults
+        $outputBag   = $using:ScanOutput
+
+        $label    = "Track $($t.RealIndex) ($($t.Codec), $($t.Channels)ch)"
+        $messages = [System.Collections.Generic.List[object]]::new()
+        $messages.Add([PSCustomObject]@{
+            Text  = "[SPN] Scanning peak: $label - may take a few minutes..."
+            Color = "Cyan"
+        })
+
+        $raw = & $ffmpegBin -analyzeduration 200M -probesize 200M `
+               -threads $threadCount -i $inputFile `
+               -map "0:$($t.RealIndex)" -filter:a volumedetect -f null - 2>&1 `
+               | ForEach-Object { "$_" }
+
+        $peak = $null
+        foreach ($line in $raw) {
+            if ($line -match 'max_volume:\s*([-\d.]+)\s*dB') {
+                $peak = [double]$Matches[1]; break
+            }
+        }
+
+        if ($null -ne $peak -and $peak -gt $threshold) {
+            $messages.Add([PSCustomObject]@{
+                Text  = "[SPN] $label - Peak: $peak dBFS - normalization will be applied"
+                Color = "Yellow"
+            })
+        } elseif ($null -ne $peak) {
+            $messages.Add([PSCustomObject]@{
+                Text  = "[SPN] $label - Peak: $peak dBFS - within threshold, skipping normalization"
+                Color = "Green"
+            })
+        } else {
+            $messages.Add([PSCustomObject]@{
+                Text  = "[SPN] $label - Peak detection failed, skipping normalization"
+                Color = "Red"
+            })
+        }
+
+        [void]$peakDict.TryAdd($t.RealIndex, $peak)
+        [void]$outputBag.Add([PSCustomObject]@{
+            RealIndex = $t.RealIndex
+            Messages  = $messages
+        })
+
+    } -ThrottleLimit $throttleLimit
+
+    # Print in RealIndex order for stable output.
+    $ScanOutput | Sort-Object RealIndex | ForEach-Object {
+        foreach ($msg in $_.Messages) {
+            Write-Host $msg.Text -ForegroundColor $msg.Color
+        }
+    }
+
+    # -------------------------------------------------------------------
+    # PHASE C - Sequential merge
+    # Iterates $PendingTracks in original source order.
+    # NeedsNormalization resolved from $PeakResults via TryGetValue.
+    # NeedsSpnScan is internal scaffolding - stripped from $Processed output.
+    # -------------------------------------------------------------------
+    foreach ($t in $PendingTracks) {
+        if ($t.NeedsSpnScan) {
+            $peakVal = $null
+            [void]$PeakResults.TryGetValue($t.RealIndex, [ref]$peakVal)
+            $t.NeedsNormalization = ($null -ne $peakVal -and $peakVal -gt $PeakThresholdDB)
+        }
+
+        $Processed.Add([PSCustomObject]@{
+            Index=$t.Index; RealIndex=$t.RealIndex; Codec=$t.Codec; Channels=$t.Channels
+            Profile=$t.Profile; Title=$t.Title; Language=$t.Language; Action=$t.Action
+            Passthrough=$t.Passthrough; Downmix=$t.Downmix; Bitrate=$t.Bitrate
+            PassthroughTag=$t.PassthroughTag; Output=$t.Output; Rule=$t.Rule
+            Priority=$t.Priority; NeedsNormalization=$t.NeedsNormalization
+        })
+    }
+
     return $Processed
 }
+
 
 # =============================
 #  FFMPEG COMMAND BUILDER
 # =============================
 function Build-FFmpegCommand {
-    param($Tracks, $InputFile, $ThreadCount)
+    param(
+        $Tracks,
+        [string] $InputFile,
+        [int]    $ThreadCount
+    )
 
-    $ffArgs = New-Object System.Collections.Generic.List[string]
+    $ffArgs   = [System.Collections.Generic.List[string]]::new()
+    $loudnorm = "loudnorm=I=-24:TP=-1.5:LRA=11"  # SPN: applied only when NeedsNormalization=$true
 
     # ------------------------------------------------------------------
     #  Global options
@@ -479,31 +626,32 @@ function Build-FFmpegCommand {
     #  must appear after -i.
     # ------------------------------------------------------------------
     $ffArgs.AddRange([string[]](
-        "-threads",             $ThreadCount,
-        "-analyzeduration",     "200M",         # ensures TrueHD channel layout fully parsed
-        "-probesize",           "200M",         # raised from 100M
-        "-err_detect",          "ignore_err",
-        "-drc_scale",           "0",
-        "-i",                   $InputFile,
-        "-avoid_negative_ts",   "make_zero",    # clamps negative TrueHD PTS to zero
-        "-max_muxing_queue_size","14000",       # stops video flooding mux queue when audio is slow
-        "-map",                 "0:v?",
-        "-c:v",                 "copy",
-        "-map_metadata",        "0",
-        "-map_chapters",        "0"
+        "-y",
+        "-threads",              $ThreadCount,
+        "-analyzeduration",      "200M",         # ensures TrueHD channel layout fully parsed
+        "-probesize",            "200M",         # raised from 100M
+        "-err_detect",           "ignore_err",
+        "-drc_scale",            "0",
+        "-i",                    $InputFile,
+        "-avoid_negative_ts",    "make_zero",    # clamps negative TrueHD PTS to zero
+        "-max_muxing_queue_size","14000",        # stops video flooding mux queue when audio is slow
+        "-map",                  "0:v?",
+        "-c:v",                  "copy",
+        "-map_metadata",         "0",
+        "-map_chapters",         "0"
     ))
 
     $i = 0
     foreach ($t in $Tracks) {
         if ($t.Action -eq "Removed") { continue }
 
-        $ffArgs.AddRange([string[]]("-map","0:$($t.RealIndex)"))
+        $ffArgs.AddRange([string[]]("-map", "0:$($t.RealIndex)"))
         $LangTag = " [$($t.Language)]"
 
         if ($t.Passthrough) {
             $ffArgs.AddRange([string[]](
-                "-c:a:$i","copy",
-                "-metadata:s:a:$i","title=$($t.PassthroughTag)$LangTag"
+                "-c:a:$i",          "copy",
+                "-metadata:s:a:$i", "title=$($t.PassthroughTag)$LangTag"
             ))
             $t.Output = "$($t.PassthroughTag)$LangTag"
         }
@@ -513,56 +661,64 @@ function Build-FFmpegCommand {
             # Dolby DRC is disabled. Final output is encoded as DD+ 5.1.
             # Downmixes 7.1 audio to EAC3 using ITU-R BS.775 matrix
             # Side (SL/SR) are folded into the rear (BL/BR) with -3 dB attenuation
-            # alimiter catches post-pan peaks exceeding 0 dBFS (attack=5ms, release=50ms)
-            $panFilter = "aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled"
+            # alimiter catches post-pan peaks exceeding -0.47 dBFS (attack=5ms, release=50ms)
+            $pre       = $t.NeedsNormalization ? "$loudnorm," : ""
+            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled"
 
             $ffArgs.AddRange([string[]](
-                "-filter:a:$i", $panFilter,
-                "-c:a:$i",      "eac3",
-                "-b:a:$i",      $t.Bitrate,
-                "-dialnorm",    "-31",
-                "-cutoff",      "20000",
+                "-filter:a:$i",     $panFilter,
+                "-c:a:$i",          "eac3",
+                "-b:a:$i",          $t.Bitrate,
+                "-dialnorm",        "-31",
+                "-cutoff",          "20000",
                 "-metadata:s:a:$i", "title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
         }
         elseif ($t.Channels -le 2) {
+            if ($t.NeedsNormalization) {
+                $ffArgs.AddRange([string[]]("-filter:a:$i", $loudnorm))
+            }
             $ffArgs.AddRange([string[]](
-                "-c:a:$i","eac3",
-                "-ac","2",
-                "-b:a:$i",$t.Bitrate,
-                "-dialnorm","-31",
-                "-dsur_mode","1",           # Dolby Surround Mode, for EAC3 encoder.
-                "-stereo_rematrixing","1",  # Explicitly enable rematrixing
-                "-metadata:s:a:$i","title=DD+ 2.0 ($($t.Bitrate))$LangTag"
+                "-c:a:$i",            "eac3",
+                "-ac",                "2",
+                "-b:a:$i",            $t.Bitrate,
+                "-dialnorm",          "-31",
+                "-dsur_mode",         "1",           # Dolby Surround Mode, for EAC3 encoder.
+                "-stereo_rematrixing","1",            # Explicitly enable rematrixing
+                "-metadata:s:a:$i",   "title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
         }
         else {
             # --- 5.1 RE-ENCODE PATH ---
-            # Re-encodes any 5.1 audio track to EAC3 (DD+ 5.1).
-            # No downmixing occurs here — input must already be 5.1.
+            # Re-encodes 5.1 input to EAC3 (DD+ 5.1). 6.1 input (DTS 7ch
+            # after Safety Audit) also routes here — downmixed to 5.1 via -ac 6.
             # Dolby DRC is disabled. Loudness signaling handled by -dialnorm -31.
+            if ($t.NeedsNormalization) {
+                $ffArgs.AddRange([string[]]("-filter:a:$i", $loudnorm))
+            }
             $ffArgs.AddRange([string[]](
-                "-c:a:$i","eac3",
-                "-ac","6",
-                "-b:a:$i",$t.Bitrate,
-                "-dialnorm","-31",
-                "-cutoff","20000",
-                "-metadata:s:a:$i","title=DD+ 5.1 ($($t.Bitrate))$LangTag"
+                "-c:a:$i",          "eac3",
+                "-ac",              "6",
+                "-b:a:$i",          $t.Bitrate,
+                "-dialnorm",        "-31",
+                "-cutoff",          "20000",
+                "-metadata:s:a:$i", "title=DD+ 5.1 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 5.1 ($($t.Bitrate))$LangTag"
         }
 
-        $ffArgs.AddRange([string[]]("-metadata:s:a:$i","language=$($t.Language)"))
+        $ffArgs.AddRange([string[]]("-metadata:s:a:$i", "language=$($t.Language)"))
 
-        $disp = if ($i -eq 0) { "default" } else { "0" }
-        $ffArgs.AddRange([string[]]("-disposition:a:$i",$disp))
+        $disp = $i -eq 0 ? "default" : "0"
+        $ffArgs.AddRange([string[]]("-disposition:a:$i", $disp))
 
         $i++
     }
 
-    $ffArgs.AddRange([string[]]("-map","0:s?","-c:s","copy"))
+    $ffArgs.AddRange([string[]]("-map", "0:s?", "-c:s", "copy"))
+    $ffArgs.AddRange([string[]]("-map", "0:t?", "-c:t", "copy"))
     $outDir  = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($InputFile))
     $outName = [System.IO.Path]::GetFileNameWithoutExtension($InputFile) + "_ddp5only.mkv"
     $ffArgs.Add([System.IO.Path]::Combine($outDir, $outName))
@@ -607,10 +763,10 @@ foreach ($t in $tracks) {
 
     # Color selection
     $Color = switch ($t.Action) {
-        "Passthrough" { "Green" }      # Keep green for passthrough (good)
-        "Downmix"     { "Yellow" }     # Keep yellow for downmix (warning)
-        "Encode"      { "Blue" }       # Blue for encoding (main action)
-        "Removed"     { "Red" }        # Red for removed (important)
+        "Passthrough" { "Green" }
+        "Downmix"     { "Yellow" }
+        "Encode"      { "Blue" }
+        "Removed"     { "Red" }
         default       { "White" }
     }
 
@@ -630,10 +786,10 @@ foreach ($t in $tracks) {
     }
 
     # Build output label
-    $OutputLabel = if ($t.Output) { $t.Output } else { "(none)" }
+    $OutputLabel = $t.Output ? $t.Output : "(none)"
 
     # Show "-" for removed tracks, otherwise priority.
-    $PriLabel = if ($t.Action -eq "Removed") { "-" } else { $t.Priority }
+    $PriLabel = $t.Action -eq "Removed" ? "-" : $t.Priority
 
     # Final formatted line
     $line = "{0,-4} {1,-8} {2,-5} {3,-16} {4,-40} {5,-5} {6}" -f `
