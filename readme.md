@@ -15,7 +15,7 @@ Designed for home theater users who want clean, consistent audio without writing
 ## Requirements
 
 - **PowerShell 7.6**
-- **FFmpeg 8.1 or newer** — Place `ffmpeg` and `ffprobe` in the same folder as the script. You can grab the latest builds from the official FFmpeg download page: **https://ffmpeg.org/download.html**
+- **FFmpeg 8.1 or newer** — Place **ffmpeg** and **ffprobe** in the same folder as the script. You can grab the latest builds from the official FFmpeg download page: **https://ffmpeg.org/download.html**
 - **Runs on:** Windows 10/11, macOS, Linux
 
 > **Note:** The scripts rely on features and stability improvements introduced in FFmpeg 8.1, particularly for reliable EAC3, TrueHD, and DTS-HD parsing.
@@ -30,8 +30,6 @@ Designed for home theater users who want clean, consistent audio without writing
 | **ConvertAudioEngine-Keep71.ps1** | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
 | **AudioRemove-AC3.ps1** | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
 | **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
-
----
 
 ## Quick Start
 
