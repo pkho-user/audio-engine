@@ -1,5 +1,5 @@
 # ============================================================
-# Script: AudioPeakRMSChecker.ps1  -  (Version 4.11)
+# Script: AudioPeakRMSChecker.ps1  -  (Version 4.12)
 #
 # Overview: 
 # Probes all audio streams in an MKV file using ffprobe, then runs
@@ -9,7 +9,8 @@
 # Saves a full astats log file per track for further inspection.
 # Supports single-track and dual-track (source + downmix) analysis modes.
 #
-# Usage: pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
+# Usage (Windows):     pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
+# Usage (macOS/Linux): pwsh -File ./AudioPeakRMSChecker.ps1 "./YourMovie.mkv"
 #
 # Utility for: Conversion Engines (DDP51.ps1 / Keep71.ps1)
 # Compatible: PS 7.6 | FFmpeg 8.1
@@ -27,6 +28,12 @@ param(
     [int]$MaxRuntimeMultiplier = 4,
     [int]$MinTimeoutSeconds    = 60
 )
+
+# --- Binary resolution ---
+
+$ext     = $IsWindows ? '.exe' : ''
+$ffmpeg  = Join-Path $PSScriptRoot "ffmpeg$ext"
+$ffprobe = Join-Path $PSScriptRoot "ffprobe$ext"
 
 # JSON Output Toggle
 $JsonMode = $false   # Set to $true for JSON-only output
@@ -46,7 +53,7 @@ function Get-Metric {
 
 function Get-FileDuration {
     param([string]$FilePath)
-    $raw = & ffprobe -v error -show_entries format=duration `
+    $raw = & $script:ffprobe -v error -show_entries format=duration `
         -of default=noprint_wrappers=1:nokey=1 "$FilePath" 2>$null
     $first = $raw | Where-Object { $_ -match '^\d' } | Select-Object -First 1
     return $first ? [double]::Parse($first.Trim(), [CultureInfo]::InvariantCulture) : 0.0
@@ -88,6 +95,11 @@ function Measure-Track {
     # The file is removed automatically when the script finishes.
     $tmpOut = [System.IO.Path]::GetTempFileName()
 
+    if (-not $IsWindows) {
+        chmod 666 $tmpErr
+        chmod 666 $tmpOut
+    }
+
     $etaSec = Get-TrackETA $Codec $TotalDuration $FileSizeMB
     $etaStr = "$([Math]::Floor($etaSec / 60))m $(([int]($etaSec % 60)).ToString('D2'))s"
     Write-Info "Analyzing $Label (map 0:a:$MapIndex)  -  estimated ~$etaStr ..."
@@ -103,7 +115,7 @@ function Measure-Track {
     )
 
     $procParams = @{
-        FilePath               = "ffmpeg"
+        FilePath               = $script:ffmpeg
         ArgumentList           = $ffArgs
         RedirectStandardError  = $tmpErr
         RedirectStandardOutput = $tmpOut
@@ -175,7 +187,7 @@ function Measure-Track {
         Remove-Item $tmpErr, $tmpOut -Force -ErrorAction SilentlyContinue
     }
 
-    $out | Out-File -LiteralPath $log -Encoding UTF8BOM
+    $out | Out-File -LiteralPath $log -Encoding UTF8
     Write-Info "  Saved astats log: $log"
 
     # Log verification
@@ -345,9 +357,13 @@ function Format-Metrics {
 
 # --- Validate environment ---
 
-foreach ($bin in 'ffmpeg','ffprobe') {
-    if (-not (Get-Command $bin -ErrorAction SilentlyContinue)) {
-        Write-Err "$bin not found on PATH."
+foreach ($bin in $ffprobe, $ffmpeg) {
+    if (-not (Test-Path -LiteralPath $bin)) {
+        Write-Err "Missing required binary: $bin"
+        exit 12
+    }
+    if (-not $IsWindows -and -not ((Get-Item -LiteralPath $bin).UnixFileMode -band [System.IO.UnixFileMode]::UserExecute)) {
+        Write-Err "Binary not executable: $bin — run: chmod +x `"$bin`""
         exit 12
     }
 }
@@ -376,7 +392,7 @@ if ($fileDuration -gt 0) {
 
 Write-Info "Probing audio streams in: $InputFile"
 
-$probe = & ffprobe -v error -select_streams a `
+$probe = & $ffprobe -v error -select_streams a `
     -show_entries stream=index,codec_name,channels `
     -of csv=p=0 "$InputFile"
 
