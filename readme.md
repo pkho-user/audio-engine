@@ -1,7 +1,7 @@
 # Converts 7.1 audio tracks to DDP 5.1
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-7.6-blue)
-![Repo Size](https://img.shields.io/github/repo-size/pkho-user/audio-engine)
+![Linux](https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white)
 
 > **Downmix is only used for sources with more than 5.1 channels.**  
 > **Audio 5.1 sources are only re-encoded.**  
