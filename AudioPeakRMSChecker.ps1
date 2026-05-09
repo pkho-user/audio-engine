@@ -1,13 +1,13 @@
 # ============================================================
-# Script: AudioPeakRMSChecker.ps1  -  (Version 4.12)
+# Script: AudioPeakRMSChecker.ps1  -  (Version 4.14)
 #
 # Overview: 
 # Probes all audio streams in an MKV file using ffprobe, then runs
-# FFmpeg astats analysis on supported tracks (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DDP 5.1).
+# FFmpeg astats analysis on supported tracks (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DDP 5.1, AAC 5.1).
 # Reports: Peak level dB, RMS level dB, Crest factor and Peak count
 # per track with PASS/FAIL evaluation.
 # Saves a full astats log file per track for further inspection.
-# Supports single-track and dual-track (source + downmix) analysis modes.
+# Supports single-track and dual-track analysis modes (7.1 source, DDP 5.1, AAC 5.1, or combinations).
 #
 # Usage (Windows):     pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
 # Usage (macOS/Linux): pwsh -File ./AudioPeakRMSChecker.ps1 "./YourMovie.mkv"
@@ -26,7 +26,10 @@ param(
 
     # Tunable timeout parameters
     [int]$MaxRuntimeMultiplier = 4,
-    [int]$MinTimeoutSeconds    = 60
+    [int]$MinTimeoutSeconds    = 60,
+
+    # Pass -JsonMode on the command line to enable JSON output for this run.
+    [switch]$JsonMode
 )
 
 # --- Binary resolution ---
@@ -35,8 +38,9 @@ $ext     = $IsWindows ? '.exe' : ''
 $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg$ext"
 $ffprobe = Join-Path $PSScriptRoot "ffprobe$ext"
 
-# JSON Output Toggle
-$JsonMode = $false   # Set to $true for JSON-only output
+# JSON Output Toggle — change $false to $true to enable JSON output by default.
+# Passing -JsonMode on the command line also enables it regardless of this setting.
+$JsonMode = $JsonMode.IsPresent -or $false
 
 # --- Helpers ---
 
@@ -96,8 +100,8 @@ function Measure-Track {
     $tmpOut = [System.IO.Path]::GetTempFileName()
 
     if (-not $IsWindows) {
-        chmod 666 $tmpErr
-        chmod 666 $tmpOut
+        chmod 600 $tmpErr
+        chmod 600 $tmpOut
     }
 
     $etaSec = Get-TrackETA $Codec $TotalDuration $FileSizeMB
@@ -432,16 +436,30 @@ if ($supported.Count -eq 0) {
     exit 1
 }
 
-Write-Info "Supported audio streams detected:"
-foreach ($s in $supported) {
-    Write-Host ("  FFProbeIndex={0}, MapIndex={1}, Codec={2}, Channels={3}" -f `
-        $s.FFProbeIndex, $s.MapIndex, $s.Codec, $s.Channels)
+# Codec display name lookup. Key format: "codec:channels". Falls back to raw "codec (Nch)" for any unmapped combination.
+$codecDisplayMap = @{
+    'truehd:8' = 'TrueHD 7.1'
+    'truehd:6' = 'TrueHD 5.1'
+    'dts:8'    = 'DTS-HD MA 7.1'
+    'dts:6'    = 'DTS-HD MA 5.1'
+    'aac:8'    = 'AAC 7.1'
+    'aac:6'    = 'AAC 5.1'
+    'eac3:6'   = 'Dolby Digital Plus 5.1'
+    'eac3:8'   = 'Dolby Digital Plus 7.1'
 }
 
-# --- Identify source/downmix ---
+Write-Info "Supported audio streams detected:"
+foreach ($s in $supported) {
+    $codecDisplay = $codecDisplayMap["$($s.Codec):$($s.Channels)"] ?? "$($s.Codec) ($($s.Channels)ch)"
+    Write-Host ("  FFProbeIndex={0}, MapIndex={1}, Codec={2}, Channels={3}" -f `
+        $s.FFProbeIndex, $s.MapIndex, $codecDisplay, $s.Channels)
+}
+
+# --- Identify analyzable tracks ---
 
 $source  = $supported | Where-Object { $_.Codec -in @("truehd","aac","dts") -and $_.Channels -eq 8 } | Select-Object -First 1
 $downmix = $supported | Where-Object { $_.Codec -eq "eac3" -and $_.Channels -eq 6 } | Select-Object -First 1
+$aac51   = $supported | Where-Object { $_.Codec -eq "aac"  -and $_.Channels -eq 6 } | Select-Object -First 1
 
 # The script sets the source label once so later analysis sections do not repeat that work.
 $srcLabel = if ($source) {
@@ -454,35 +472,65 @@ $srcLabel = if ($source) {
 
 $results = [List[object]]::new()
 
-# --- Analysis logic ---
+# --- Build analyzable track list ---
+# Each entry carries: the underlying stream object, the user-facing Label,
+# the LogSuffix used in the per-track astats log filename, and a ModeName
+# used to compose the "Mode: ..." status line.
 
-if ($source -and $downmix) {
-    Write-Info "Mode: Dual-track analysis (7.1 source + DDP 5.1)."
+$analyzable = [List[object]]::new()
 
-    $src = Measure-Track $InputFile $source.MapIndex  $srcLabel          "source"  $source.Codec  $fileDuration $fileSizeMB $source.Channels
-    $dm  = Measure-Track $InputFile $downmix.MapIndex "Downmix DDP 5.1" "downmix" $downmix.Codec $fileDuration $fileSizeMB $downmix.Channels
-
-    $results.Add((Set-MetricStatus $src))
-    $results.Add((Set-MetricStatus $dm))
-
+if ($source) {
+    $analyzable.Add([PSCustomObject]@{
+        Stream   = $source
+        Label    = $srcLabel
+        Suffix   = 'source'
+        ModeName = '7.1 source'
+    })
 }
-elseif ($source -and -not $downmix) {
-    Write-Info "Mode: Single-track analysis (7.1 source only)."
-
-    $src = Measure-Track $InputFile $source.MapIndex $srcLabel "single" $source.Codec $fileDuration $fileSizeMB $source.Channels
-    $results.Add((Set-MetricStatus $src))
-
+if ($downmix) {
+    $analyzable.Add([PSCustomObject]@{
+        Stream   = $downmix
+        Label    = 'Downmix DDP 5.1'
+        Suffix   = 'downmix'
+        ModeName = 'DDP 5.1'
+    })
 }
-elseif (-not $source -and $downmix) {
-    Write-Info "Mode: Single-track analysis (DDP 5.1 only)."
-
-    $dm = Measure-Track $InputFile $downmix.MapIndex "Downmix DDP 5.1" "single" $downmix.Codec $fileDuration $fileSizeMB $downmix.Channels
-    $results.Add((Set-MetricStatus $dm))
-
+# Preserve v4.13 behavior: when source AND downmix are both present, ignore aac51.
+# In every other case (alone, paired with source, or paired with downmix), aac51 is analyzed.
+if ($aac51 -and -not ($source -and $downmix)) {
+    $analyzable.Add([PSCustomObject]@{
+        Stream   = $aac51
+        Label    = 'AAC 5.1'
+        Suffix   = 'aac51'
+        ModeName = 'AAC 5.1'
+    })
 }
-else {
-    Write-Err "Supported codecs found, but no valid 7.1 or DDP 5.1 combination."
+
+if ($analyzable.Count -eq 0) {
+    Write-Err "Supported codecs found, but no valid 7.1 or 5.1 combination."
     exit 1
+}
+
+# Mode message — exactly matches v4.13 wording for the three legacy combinations
+# (source+downmix, source-only, downmix-only) and extends naturally for the new modes.
+$modeDesc = if ($analyzable.Count -eq 1) {
+    "Single-track analysis ($($analyzable[0].ModeName) only)."
+} elseif ($analyzable.Count -eq 2) {
+    $modes = ($analyzable | ForEach-Object { $_.ModeName }) -join ' + '
+    "Dual-track analysis ($modes)."
+} else {
+    "$($analyzable.Count)-track analysis."
+}
+Write-Info "Mode: $modeDesc"
+
+# Single-track runs use the legacy "single" suffix in the log filename.
+if ($analyzable.Count -eq 1) {
+    $analyzable[0].Suffix = 'single'
+}
+
+foreach ($a in $analyzable) {
+    $r = Measure-Track $InputFile $a.Stream.MapIndex $a.Label $a.Suffix $a.Stream.Codec $fileDuration $fileSizeMB $a.Stream.Channels
+    $results.Add((Set-MetricStatus $r))
 }
 
 # ==================
@@ -496,10 +544,11 @@ $schema = [PSCustomObject]@{
     analysis = [ordered]@{}
 }
 
-# Insert source/downmix if present
+# Insert each analyzed track into the schema (source, downmix, or aac51)
 foreach ($r in $results) {
     $role = if ($r.Label -like "Source*") { "source" }
             elseif ($r.Label -like "Downmix*") { "downmix" }
+            elseif ($r.Label -eq "AAC 5.1") { "aac51" }
             else { "track$($r.MapIndex)" }
 
     $schema.analysis[$role] = [PSCustomObject]@{
