@@ -1,7 +1,7 @@
 # Converts 7.1 audio tracks to DDP 5.1
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-7.6-blue)
-![Linux](https://img.shields.io/badge/OS-Linux-blue?logo=linux&logoColor=white)
+![Linux](https://img.shields.io/badge/OS-Linux-yellow?logo=linux&logoColor=white)
 
 > **Downmix is only used for sources with more than 5.1 channels.**  
 > **Audio 5.1 sources are only re-encoded.**  
@@ -22,7 +22,7 @@ Designed for home theater users who want clean, consistent audio without writing
 
 ---
 
-## Scripts
+## Audio Scripts
 
 | Script | Purpose |
 |--------|---------|
@@ -76,7 +76,7 @@ pwsh -File ./ConvertAudioEngine-Keep71.ps1 "./YourMovie.mkv"
 
 If an output file already exists, it will be overwritten automatically.
 
-## Comparison — This Audio Scripts vs. Typical FFmpeg/PowerShell Scripts
+## Comparison — Audio Scripts vs. Typical FFmpeg/PowerShell Scripts
 
 | Feature / Capability | This Engine | Typical GitHub Scripts |
 |----------------------|-------------|------------------------|
