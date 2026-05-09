@@ -78,7 +78,7 @@ If an output file already exists, it will be overwritten automatically.
 
 ## Comparison — Audio Scripts vs. Typical FFmpeg/PowerShell Scripts
 
-| Feature / Capability | This Engine | Typical GitHub Scripts |
+| Feature / Capability | Audio Script Set   | Typical GitHub Scripts |
 |----------------------|-------------|------------------------|
 | **De-sync Protection** | ✔ | ✖ |
 | **Sync-Stability System** | ✔ | ✖ |
