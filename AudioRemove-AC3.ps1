@@ -1,5 +1,5 @@
 # ============================================================
-# Script     : AudioRemove-AC3.ps1 — (Version 3.0)
+# Script     : AudioRemove-AC3.ps1 — (Version 3.1)
 # Overview   : Pure remux (no re-encode).
 #
 # Purpose    : Remove all AC3 and E-AC3 audio streams (typically low-bitrate).
@@ -182,7 +182,7 @@ if ($dropAudio.Count -eq 0) {
 
 if ($keepAudio.Count -eq 0) {
     Write-Warning "All audio tracks are AC3/E-AC3 -- nothing to keep. Exiting."
-    exit 0
+    exit 2   # exit 2 = aborted (destructive action prevented); exit 0 = no AC3 found (clean no-op)
 }
 
 # Logging
@@ -232,12 +232,6 @@ function New-MapArgs {
     }
     return $mapArgs.ToArray()
 }
-
-# --------------------------------
-# This notes the handler builder was removed in version 2.9 for cleaner MKV output.
-# Handler names belong to MP4 and MOV formats and do not apply to MKV files.
-# MKV stores them as unwanted SimpleTags, adding metadata the original source never contained.
-# --------------------------------
 
 # -----------------------------------
 # ENGINE: Audio-track settings helper
@@ -312,8 +306,8 @@ $ffArgs += $audioMapArgs
 $ffArgs += $subMapArgs
 $ffArgs += $attachMapArgs
 
-# Per-stream disposition: one directive per stream, no overlapping targets.
-# Avoids "Multiple -disposition options specified for stream N" FFmpeg warning.
+# Give each audio track a single disposition setting.
+# This avoids FFmpeg warnings about overlapping dispositions.
 $ffArgs += New-AudioDispositionArgs $keepAudio.Count
 
 $ffArgs += @(
@@ -372,8 +366,7 @@ foreach ($t in $SubTracks) {
 
 $droppedSubCount = $SubTracks.Count - $engSubs.Count
 if ($droppedSubCount -gt 0) {
-    $seqIdx = $AudioTracks.Count + $engSubs.Count + 1
-    $line   = "{0,-4} {1,-20} {2,-10} {3}" -f $seqIdx, 'subtitle(s)', 'Dropped', "$droppedSubCount Non-English sub(s)"
+    $line   = "{0,-4} {1,-20} {2,-10} {3}" -f '—', 'subtitle(s)', 'Dropped', "$droppedSubCount Non-English sub(s)"
     Write-Host $line -ForegroundColor Yellow
 }
 
