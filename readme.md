@@ -81,6 +81,7 @@ If an output file already exists, it will be overwritten automatically.
 | Feature / Capability | Audio Script Set   | Typical GitHub Scripts |
 |----------------------|-------------|------------------------|
 | **De-sync Protection** | ✔ | ✖ |
+| **Safe Peak Normalizer (SPN)** | ✔ | ✖ |
 | **Sync-Stability System** | ✔ | ✖ |
 | **PTS Correction** | ✔ | ✖ |
 | **Mux-Queue Protection** | ✔ | ✖ |
@@ -97,15 +98,11 @@ If an output file already exists, it will be overwritten automatically.
 | Precompiled regex for performance | ✔ | ✖ |
 | Malformed layout guards (audio codecs) | ✔ | ✖ |
 | Safe fallback rules | ✔ | ✖ |
-| Clean metadata preservation | ✔ | Partial |
-| Language tag preservation | ✔ | ✖ |
 | Subtitle & chapter passthrough | ✔ | Partial |
 | MKV attachment passthrough (fonts, cover art) | ✔ | ✖ |
-| Consistent output naming | ✔ | ✖ |
 | Adjustable audio bitrates | ✔ | ✖ |
 | Add new codecs easily | ✔ | ✖ |
 | Commentary detection & removal | ✔ | ✖ |
-| Safe Peak Normalizer (SPN) | ✔ | ✖ |
 | Clean, color-coded summary output | ✔ | ✖ |
 | Cross-platform (Windows, macOS, Linux) | ✔ | Rarely |
 | Batch mode (folder processing) | ✖ | Sometimes |
