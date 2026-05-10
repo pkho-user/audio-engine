@@ -147,7 +147,7 @@ You can tweak these settings directly in the script:
 - **`CommentaryKeywords`** — Add or remove words that trigger commentary track removal.
 - **Audio rule groups** (`$Rules_AAC`, `$Rules_DTS`, etc.) — Adjust bitrates, add new codecs, or change behavior per codec family.
 - **`ThreadCount`** — Performance tuning. Defaults to 8 threads. Adjustable from **4 to 16**.
-- **`ScanThrottle`** — Limits how many peak-scan tasks run simultaneously. Recommended values: **1 to 4**. Use 1 for spinning disks, up to 4 for SSD/NVMe.
+- **`ScanThrottle`** — Limits how many peak-scan tasks run simultaneously. Recommended values: **1 to 4**. Use 1 for Hard Drives, up to 4 for SSD/NVMe.
 
 ---
 
