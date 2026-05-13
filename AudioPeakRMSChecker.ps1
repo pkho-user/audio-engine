@@ -1,5 +1,5 @@
 # ============================================================
-# Script: AudioPeakRMSChecker.ps1  -  (Version 4.14)
+# Script: AudioPeakRMSChecker.ps1  -  (Version 4.17)
 #
 # Overview: 
 # Probes all audio streams in an MKV file using ffprobe, then runs
@@ -8,6 +8,9 @@
 # per track with PASS/FAIL evaluation.
 # Saves a full astats log file per track for further inspection.
 # Supports single-track and dual-track analysis modes (7.1 source, DDP 5.1, AAC 5.1, or combinations).
+#
+# Changes in 4.17:
+#   - TrueHD preroll (start_time ms) reported in summary and JSON schema.
 #
 # Usage (Windows):     pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
 # Usage (macOS/Linux): pwsh -File ./AudioPeakRMSChecker.ps1 "./YourMovie.mkv"
@@ -44,9 +47,12 @@ $JsonMode = $JsonMode.IsPresent -or $false
 
 # --- Helpers ---
 
-function Write-Info { param([string]$m) Write-Host $m -ForegroundColor Cyan }
-function Write-Warn { param([string]$m) Write-Host $m -ForegroundColor Yellow }
-function Write-Err  { param([string]$m) Write-Host $m -ForegroundColor Red }
+function Write-Info    { param([string]$m) Write-Host $m -ForegroundColor Cyan }
+function Write-Section { param([string]$m) Write-Host $m -ForegroundColor White }
+function Write-Active  { param([string]$m) Write-Host $m -ForegroundColor Magenta }
+function Write-Done    { param([string]$m) Write-Host $m -ForegroundColor Green }
+function Write-Warn    { param([string]$m) Write-Host $m -ForegroundColor Yellow }
+function Write-Err     { param([string]$m) Write-Host $m -ForegroundColor Red }
 
 function Get-Metric {
     param([string[]]$Lines, [string]$Pattern)
@@ -88,13 +94,17 @@ function Measure-Track {
         [string]$Codec,
         [double]$TotalDuration,
         [double]$FileSizeMB,
-        [int]$Channels
+        [int]$Channels,
+        [double]$StartTime = 0.0
     )
 
+    # FIX: Log file anchored to input file's directory, not CWD.
+    $outDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($InputFile))
     $base   = [System.IO.Path]::GetFileNameWithoutExtension($InputFile)
-    $log    = "$base-$LogSuffix-astats.txt"
+    $log    = Join-Path $outDir "$base-$LogSuffix-astats.txt"
+
     $tmpErr = [System.IO.Path]::GetTempFileName()
-    # This temporary file is used to catch FFmpeg’s output so it doesn’t fill up your screen.
+    # This temporary file is used to catch FFmpeg's output so it doesn't fill up your screen.
     # FFmpeg writes to this file, but the script never needs to read it.
     # The file is removed automatically when the script finishes.
     $tmpOut = [System.IO.Path]::GetTempFileName()
@@ -111,6 +121,8 @@ function Measure-Track {
     $ffArgs = @(
         '-hide_banner'
         '-vn'
+        '-analyzeduration', '200M'
+        '-probesize',       '200M'
         '-i', $InputFile
         '-map', "0:a:$MapIndex"
         '-af', 'astats=measure_overall=all:measure_perchannel=none'
@@ -169,7 +181,8 @@ function Measure-Track {
         }
 
         # 2. Deterministic exit-code check
-        $exit = ($proc.ExitCode -is [int]) ? $proc.ExitCode : 0
+        # FIX: Removed redundant -is [int] type check; ExitCode is always [int] on an exited process.
+        $exit = $proc.ExitCode
         if ($exit -ne 0) {
             Write-Err "FFmpeg exited with code $exit while analyzing $Label (map 0:a:$MapIndex)."
             Write-Err "Check the log file: $log"
@@ -192,7 +205,7 @@ function Measure-Track {
     }
 
     $out | Out-File -LiteralPath $log -Encoding UTF8
-    Write-Info "  Saved astats log: $log"
+    Write-Host "  Saved astats log: $log" -ForegroundColor DarkCyan
 
     # Log verification
     if (-not (Test-Path -LiteralPath $log)) {
@@ -210,7 +223,7 @@ function Measure-Track {
     $rms   = Get-Metric $out "RMS level dB"
     $clip  = Get-Metric $out "] Peak count"
 
-    # Guard: FFmpeg reports silent audio as “-inf,” which TryParse cannot read as a valid number.
+    # Guard: FFmpeg reports silent audio as "-inf," which TryParse cannot read as a valid number.
     if ($peak -match '^-?inf') { $peak = '-100.0' }
     if ($rms  -match '^-?inf') { $rms  = '-100.0' }
 
@@ -249,6 +262,7 @@ function Measure-Track {
         RMS            = $rms
         Crest          = $crest
         ClippedSamples = $validClip
+        StartTime      = $StartTime
         LogFile        = $log
     }
 }
@@ -256,9 +270,9 @@ function Measure-Track {
 function Set-MetricStatus {
     param([PSCustomObject]$m)
 
-    # The peak check uses “greater than 0.0 dB” because anything above that is definitely too loud.
+    # The peak check uses "greater than 0.0 dB" because anything above that is definitely too loud.
     # The clipping check treats exactly 0.0 dB as clipping if any clipped samples are detected.
-    # A case where the peak is exactly 0.0 dB but shows zero clipped samples cannot happen with FFmpeg’s astats.
+    # A case where the peak is exactly 0.0 dB but shows zero clipped samples cannot happen with FFmpeg's astats.
     # A true 0.0 dB peak always produces at least one counted peak, so these checks fully cover all real situations.
     $peakFail  = ($m.Peak  -ne "N/A" -and [double]::Parse($m.Peak,  [CultureInfo]::InvariantCulture) -gt 0.0)
     $rmsFail   = ($m.RMS   -ne "N/A" -and [double]::Parse($m.RMS,   [CultureInfo]::InvariantCulture) -gt -12.0)
@@ -282,7 +296,8 @@ function Set-MetricStatus {
 function Format-Metrics {
     param([PSCustomObject]$m)
 
-    if ($m.Peak -eq "N/A" -or $m.RMS -eq "N/A" -or $m.Crest -eq "N/A" -or $m.ClippedSamples -eq "N/A") {
+    # FIX: Removed dead ClippedSamples -eq "N/A" guard; ClippedSamples is always [int], never "N/A".
+    if ($m.Peak -eq "N/A" -or $m.RMS -eq "N/A" -or $m.Crest -eq "N/A") {
         return @("- Metrics unavailable for this track")
     }
 
@@ -356,6 +371,14 @@ function Format-Metrics {
         $lines += "  [0 clips]"
     }
 
+    # Preroll interpretation — TrueHD only; included when StartTime is present on the result object.
+    $startTime = $null
+    $stProp = $m.PSObject.Properties['StartTime']
+    if ($null -ne $stProp -and $m.Codec -eq 'truehd') {
+        $prerollMs = [int][Math]::Round([double]$stProp.Value * 1000)
+        $lines += "- Preroll: $prerollMs ms — normal TrueHD PTS offset (source); not a sync issue"
+    }
+
     return $lines
 }
 
@@ -394,10 +417,11 @@ if ($fileDuration -gt 0) {
 
 # --- Probe audio streams ---
 
-Write-Info "Probing audio streams in: $InputFile"
+Write-Done "Probing audio streams in: $InputFile"
 
+# start_time added to show_entries to support TrueHD preroll reporting.
 $probe = & $ffprobe -v error -select_streams a `
-    -show_entries stream=index,codec_name,channels `
+    -show_entries stream=index,codec_name,channels,start_time `
     -of csv=p=0 "$InputFile"
 
 if (-not $probe) {
@@ -412,10 +436,18 @@ $audioStreams = $probe | ForEach-Object {
     $idx = 0; $ch = 0
     if (-not [int]::TryParse($p[0], [ref]$idx)) { return }
     if (-not [int]::TryParse($p[2], [ref]$ch))  { return }
+
+    # Parse start_time — ffprobe may return 'N/A' for streams without a start offset.
+    $startTime = 0.0
+    if ($p.Count -ge 4 -and $p[3].Trim() -ne 'N/A') {
+        [double]::TryParse($p[3].Trim(), [NumberStyles]::Float, [CultureInfo]::InvariantCulture, [ref]$startTime) | Out-Null
+    }
+
     [PSCustomObject]@{
         FFProbeIndex = $idx
         Codec        = $p[1].ToLowerInvariant()
         Channels     = $ch
+        StartTime    = $startTime
     }
 } | Where-Object { $_ }
 
@@ -448,10 +480,10 @@ $codecDisplayMap = @{
     'eac3:8'   = 'Dolby Digital Plus 7.1'
 }
 
-Write-Info "Supported audio streams detected:"
+Write-Section "Supported audio streams detected:"
 foreach ($s in $supported) {
     $codecDisplay = $codecDisplayMap["$($s.Codec):$($s.Channels)"] ?? "$($s.Codec) ($($s.Channels)ch)"
-    Write-Host ("  FFProbeIndex={0}, MapIndex={1}, Codec={2}, Channels={3}" -f `
+    Write-Info ("  FFProbeIndex={0}, MapIndex={1}, Codec={2}, Channels={3}" -f `
         $s.FFProbeIndex, $s.MapIndex, $codecDisplay, $s.Channels)
 }
 
@@ -521,7 +553,7 @@ $modeDesc = if ($analyzable.Count -eq 1) {
 } else {
     "$($analyzable.Count)-track analysis."
 }
-Write-Info "Mode: $modeDesc"
+Write-Warn "Mode: $modeDesc"
 
 # Single-track runs use the legacy "single" suffix in the log filename.
 if ($analyzable.Count -eq 1) {
@@ -529,7 +561,7 @@ if ($analyzable.Count -eq 1) {
 }
 
 foreach ($a in $analyzable) {
-    $r = Measure-Track $InputFile $a.Stream.MapIndex $a.Label $a.Suffix $a.Stream.Codec $fileDuration $fileSizeMB $a.Stream.Channels
+    $r = Measure-Track $InputFile $a.Stream.MapIndex $a.Label $a.Suffix $a.Stream.Codec $fileDuration $fileSizeMB $a.Stream.Channels $a.Stream.StartTime
     $results.Add((Set-MetricStatus $r))
 }
 
@@ -551,17 +583,23 @@ foreach ($r in $results) {
             elseif ($r.Label -eq "AAC 5.1") { "aac51" }
             else { "track$($r.MapIndex)" }
 
+    # Build metrics object; preroll_ms added for TrueHD source tracks only.
+    $metricsObj = [PSCustomObject]@{
+        peak    = $r.Peak
+        rms     = $r.RMS
+        crest   = $r.Crest
+        clipped = $r.ClippedSamples
+    }
+    if ($r.Codec -eq 'truehd') {
+        $metricsObj | Add-Member -MemberType NoteProperty -Name preroll_ms -Value ([int][Math]::Round($r.StartTime * 1000))
+    }
+
     $schema.analysis[$role] = [PSCustomObject]@{
         codec    = $r.Codec
         channels = $r.Channels
-        metrics  = [PSCustomObject]@{
-            peak    = $r.Peak
-            rms     = $r.RMS
-            crest   = $r.Crest
-            clipped = $r.ClippedSamples
-        }
-        status = $r.Status
-        log     = $r.LogFile
+        metrics  = $metricsObj
+        status   = $r.Status
+        log      = $r.LogFile
     }
 }
 
@@ -586,6 +624,12 @@ foreach ($r in $results) {
     Write-Host ("  RMS:    {0} dB" -f $r.RMS)
     Write-Host ("  Crest:  {0} dB" -f $r.Crest)
     Write-Host ("  Clips:  {0}" -f $(($r.ClippedSamples -eq "N/A") ? "N/A" : [int]$r.ClippedSamples))
+
+    # Preroll reported for TrueHD tracks only — not meaningful for EAC3 or AAC.
+    if ($r.Codec -eq 'truehd') {
+        Write-Host ("  Preroll: {0} ms" -f ([int][Math]::Round($r.StartTime * 1000)))
+    }
+
     Write-Host ("  Status: {0}"    -f $r.Status) -ForegroundColor $color
     Write-Host ("  Log:    {0}"    -f $r.LogFile)
     Write-Host ""
