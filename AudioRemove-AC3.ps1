@@ -1,5 +1,5 @@
 # ============================================================
-# Script     : AudioRemove-AC3.ps1 — (Version 3.1)
+# Script     : AudioRemove-AC3.ps1 — (Version 3.2)
 # Overview   : Pure remux (no re-encode).
 #
 # Purpose    : Remove all AC3 and E-AC3 audio streams (typically low-bitrate).
@@ -26,7 +26,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$InputFile
+    [string]$InputFile,
+
+    [ValidateSet('Enable','Disable')]
+    [string]$SubtitleInfo = 'Enable'  # Show subtitle stream info in console output
 )
 
 # Enable strict mode; halt on any error.
@@ -186,8 +189,8 @@ if ($keepAudio.Count -eq 0) {
 }
 
 # Logging
-Write-Host "Keeping audio  (global stream index): $($keepAudio.Index -join ', ')"
-Write-Host "Dropping AC3   (global stream index): $($dropAudio.Index -join ', ')"
+Write-Host "Keeping audio  (global stream index): $($keepAudio.Index -join ', ')" -ForegroundColor Green
+Write-Host "Dropping AC3   (global stream index): $($dropAudio.Index -join ', ')" -ForegroundColor Red
 
 # Subtitles: English + untagged
 $SubTracks    = @($Tracks | Where-Object { $_.IsSubtitle })
@@ -195,12 +198,16 @@ $engSubs      = @($SubTracks | Where-Object { $_.IsEnglish })
 $untaggedSubs = @($SubTracks | Where-Object { $_.IsUntagged })
 
 if ($untaggedSubs.Count -gt 0) {
-    Write-Warning "Subtitle stream(s) with no language tag or 'und' found (indices: $($untaggedSubs.Index -join ', ')) -- keeping as language is unknown."
+    if ($SubtitleInfo -eq 'Enable') {
+        Write-Warning "Subtitle stream(s) with no language tag or 'und' found (indices: $($untaggedSubs.Index -join ', ')) -- keeping as language is unknown."
+    }
     $engSubs = @(($engSubs + $untaggedSubs) | Sort-Object Index)
 }
 
 if ($engSubs.Count -eq 0) {
-    Write-Warning "No English subtitle streams found -- output will have no subtitles."
+    if ($SubtitleInfo -eq 'Enable') {
+        Write-Warning "No English subtitle streams found -- output will have no subtitles."
+    }
 }
 
 # Attachments
@@ -270,7 +277,9 @@ if ($engSubs.Count -eq 0) {
     $subMapArgs = @()
 } else {
     $subMapArgs = New-MapArgs $engSubs
-    Write-Host "Keeping English subtitle stream(s): $($engSubs.Index -join ', ')"
+    if ($SubtitleInfo -eq 'Enable') {
+        Write-Host "Keeping English subtitle stream(s): $($engSubs.Index -join ', ')" -ForegroundColor Green
+    }
 }
 
 # Attachment map args
@@ -290,7 +299,7 @@ if ($AttachTracks.Count -gt 0) {
 $ffArgs = @(
     '-n'
     '-hide_banner'
-    '-loglevel',         'info'
+    '-loglevel',         'warning'
     '-stats'
     '-probesize',        '200M'
     '-analyzeduration',  '200M'
@@ -329,7 +338,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "FFmpeg exited with code $LASTEXITCODE."
 }
 
-Write-Host "`nDone. Output: $OutputFile"
+Write-Host "`nDone. Output: $OutputFile" -ForegroundColor Green
 
 # ======================
 # ENGINE: Summary Engine
@@ -338,9 +347,7 @@ Write-Host ""
 
 $header = "{0,-4} {1,-20} {2,-10} {3}" -f "Idx", "Codec", "Action", "Rule"
 Write-Host $header -ForegroundColor White
-Write-Host ("-" * 52) -ForegroundColor DarkGray
-
-# ----- AUDIO -----
+Write-Host ("-" * 52) -ForegroundColor Yellow
 foreach ($t in $AudioTracks) {
 
     $Action = $t.IsAC3 ? "Removed"      : "Kept"
@@ -352,22 +359,24 @@ foreach ($t in $AudioTracks) {
 }
 
 # ---- SUBTITLES (English + untagged only) ----
-foreach ($t in $SubTracks) {
+if ($SubtitleInfo -eq 'Enable') {
+    foreach ($t in $SubTracks) {
 
-    if (-not $t.IsEnglish -and -not $t.IsUntagged) { continue }
+        if (-not $t.IsEnglish -and -not $t.IsUntagged) { continue }
 
-    $Action = "Kept"
-    $Rule   = $t.IsEnglish ? "English subtitle" : "Untagged subtitle"
-    $Color  = "Cyan"
+        $Action = "Kept"
+        $Rule   = $t.IsEnglish ? "English subtitle" : "Untagged subtitle"
+        $Color  = "Cyan"
 
-    $line = "{0,-4} {1,-20} {2,-10} {3}" -f $t.Index, $t.Codec, $Action, $Rule
-    Write-Host $line -ForegroundColor $Color
-}
+        $line = "{0,-4} {1,-20} {2,-10} {3}" -f $t.Index, $t.Codec, $Action, $Rule
+        Write-Host $line -ForegroundColor $Color
+    }
 
-$droppedSubCount = $SubTracks.Count - $engSubs.Count
-if ($droppedSubCount -gt 0) {
-    $line   = "{0,-4} {1,-20} {2,-10} {3}" -f '—', 'subtitle(s)', 'Dropped', "$droppedSubCount Non-English sub(s)"
-    Write-Host $line -ForegroundColor Yellow
+    $droppedSubCount = $SubTracks.Count - $engSubs.Count
+    if ($droppedSubCount -gt 0) {
+        $line   = "{0,-4} {1,-20} {2,-10} {3}" -f '—', 'subtitle(s)', 'Dropped', "$droppedSubCount Non-English sub(s)"
+        Write-Host $line -ForegroundColor Yellow
+    }
 }
 
 # ----- ATTACHMENTS -----
@@ -381,5 +390,5 @@ foreach ($t in $AttachTracks) {
     Write-Host $line -ForegroundColor $Color
 }
 
-Write-Host ("-" * 52) -ForegroundColor DarkGray
+Write-Host ("-" * 52) -ForegroundColor Yellow
 Write-Host ""
