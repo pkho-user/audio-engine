@@ -33,8 +33,8 @@ if (-not $PSBoundParameters.ContainsKey('StereoCodec')) {
 
 # Bitrates used when the script encodes stereo audio; higher values mean higher quality.  
 # You can safely adjust these numbers, within "...k"
-#   EAC3: 224,256,320,384,448,512K   (256k = transparent for most stereo content)
-#   Opus: 192,224,256,320,352,384k   (256k = fully transparent for all content)
+#   EAC3: 224,256,320,384,448,512   (256 = transparent for most stereo content)
+#   Opus: 192,224,256,320,352,384   (256 = fully transparent for all content)
 $StereoBitrates = @{
     "EAC3" = "384k"
     "Opus" = "320k"
