@@ -30,6 +30,7 @@ Designed for home theater users who want clean, consistent audio without writing
 | **ConvertAudioEngine-Keep71.ps1** | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
 | **AudioRemove-AC3.ps1** | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
 | **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
+| **ConvertAudio2-Stereo.ps1**| Downmixes any 5.1, 7.1, or Atmos track into a high‑quality EAC3 or Opus stereo file.|
 
 ## Quick Start
 
