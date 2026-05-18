@@ -1,16 +1,13 @@
 # ============================================================
-# Script: AudioPeakRMSChecker.ps1  -  (Version 4.17)
+# Script: AudioPeakRMSChecker.ps1  -  (Version 4.21)
 #
 # Overview: 
 # Probes all audio streams in an MKV file using ffprobe, then runs
-# FFmpeg astats analysis on supported tracks (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DDP 5.1, AAC 5.1).
+# FFmpeg astats analysis on supported tracks (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0).
 # Reports: Peak level dB, RMS level dB, Crest factor and Peak count
 # per track with PASS/FAIL evaluation.
 # Saves a full astats log file per track for further inspection.
-# Supports single-track and dual-track analysis modes (7.1 source, DDP 5.1, AAC 5.1, or combinations).
-#
-# Changes in 4.17:
-#   - TrueHD preroll (start_time ms) reported in summary and JSON schema.
+# Supports single-track and multi-track analysis modes (7.1 source, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0, or combinations).
 #
 # Usage (Windows):     pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
 # Usage (macOS/Linux): pwsh -File ./AudioPeakRMSChecker.ps1 "./YourMovie.mkv"
@@ -23,6 +20,7 @@
 using namespace System.Globalization
 using namespace System.Collections.Generic
 
+[CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [string]$InputFile,
@@ -42,8 +40,8 @@ $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg$ext"
 $ffprobe = Join-Path $PSScriptRoot "ffprobe$ext"
 
 # JSON Output Toggle — change $false to $true to enable JSON output by default.
-# Passing -JsonMode on the command line also enables it regardless of this setting.
-$JsonMode = $JsonMode.IsPresent -or $false
+$DefaultJsonMode = $false
+$JsonMode = ($JsonMode.IsPresent -or $DefaultJsonMode)
 
 # --- Helpers ---
 
@@ -76,10 +74,11 @@ function Get-TrackETA {
     $sizeScale = ($Codec -in @("truehd","aac","dts")) ? [Math]::Max(1.0, $SizeMB / 15360) : 1.0
 
     $ratio = switch ($Codec) {
-        "truehd" { 0.02550 }
-        "aac"    { 0.00322 }
+        "truehd" { 0.03500 }
+        "aac"    { 0.00350 }
         "eac3"   { 0.00365 }
         "dts"    { 0.02400 }
+        "opus"   { 0.00350 }
         default  { 0.00365 }
     }
     return [int]($FileDuration * $ratio * $sizeScale)
@@ -98,15 +97,11 @@ function Measure-Track {
         [double]$StartTime = 0.0
     )
 
-    # FIX: Log file anchored to input file's directory, not CWD.
     $outDir = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($InputFile))
     $base   = [System.IO.Path]::GetFileNameWithoutExtension($InputFile)
     $log    = Join-Path $outDir "$base-$LogSuffix-astats.txt"
 
     $tmpErr = [System.IO.Path]::GetTempFileName()
-    # This temporary file is used to catch FFmpeg's output so it doesn't fill up your screen.
-    # FFmpeg writes to this file, but the script never needs to read it.
-    # The file is removed automatically when the script finishes.
     $tmpOut = [System.IO.Path]::GetTempFileName()
 
     if (-not $IsWindows) {
@@ -121,6 +116,7 @@ function Measure-Track {
     $ffArgs = @(
         '-hide_banner'
         '-vn'
+        '-sn'
         '-analyzeduration', '200M'
         '-probesize',       '200M'
         '-i', $InputFile
@@ -142,10 +138,6 @@ function Measure-Track {
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
-    # This timeout check ensures the script behaves predictably.
-    # If the file duration is unknown, the estimated time becomes zero and the timeout shrinks to the minimum value.
-    # That minimum (60 seconds) is far too short for long files and would cause false timeout errors.
-    # To avoid this, the script uses a safe 1‑hour limit whenever the duration cannot be determined.
     $maxSec = ($TotalDuration -gt 0) ?
         [Math]::Max($MinTimeoutSeconds, $etaSec * $MaxRuntimeMultiplier) :
         [Math]::Max($MinTimeoutSeconds, 3600)
@@ -171,17 +163,13 @@ function Measure-Track {
         $e = $sw.Elapsed; Write-Info "  Done in $([Math]::Floor($e.TotalMinutes))m $($e.Seconds.ToString('D2'))s"
         $out = Get-Content $tmpErr -Encoding UTF8 -ErrorAction SilentlyContinue
 
-        # ===========================
         # Guardrail: Validate stderr
-        # ===========================
 
         if (-not $out -or $out.Count -eq 0) {
             Write-Err "FFmpeg produced no stderr output for $Label (map 0:a:$MapIndex). Analysis aborted."
             exit 2
         }
 
-        # 2. Deterministic exit-code check
-        # FIX: Removed redundant -is [int] type check; ExitCode is always [int] on an exited process.
         $exit = $proc.ExitCode
         if ($exit -ne 0) {
             Write-Err "FFmpeg exited with code $exit while analyzing $Label (map 0:a:$MapIndex)."
@@ -189,7 +177,6 @@ function Measure-Track {
             exit 3
         }
 
-        # 3. Missing astats metrics
         $peakLine  = $out | Select-String -Pattern 'Peak level dB' -SimpleMatch
         $rmsLine   = $out | Select-String -Pattern 'RMS level dB' -SimpleMatch
         $clipLine  = $out | Select-String -Pattern '] Peak count'  -SimpleMatch
@@ -204,10 +191,10 @@ function Measure-Track {
         Remove-Item $tmpErr, $tmpOut -Force -ErrorAction SilentlyContinue
     }
 
-    $out | Out-File -LiteralPath $log -Encoding UTF8
+    $out | Where-Object { $_ -notmatch 'Subtitle:|Chapters:|Chapter #|^\s+start \d|^\s+title\s*:|^\s+Metadata:' } |
+        Out-File -LiteralPath $log -Encoding UTF8
     Write-Host "  Saved astats log: $log" -ForegroundColor DarkCyan
 
-    # Log verification
     if (-not (Test-Path -LiteralPath $log)) {
         Write-Err "Astats log file was not created for $Label (map 0:a:$MapIndex)."
         exit 10
@@ -245,8 +232,6 @@ function Measure-Track {
         exit 9
     }
 
-    # [Math]::Round uses MidpointRounding.ToEven (banker's rounding) by default.
-    # For example, 2.5 becomes 2 and 3.5 becomes 4, which keeps the results consistent and predictable.
     $validClip = [int][Math]::Round($validClipDouble, 0)
 
     # Crest factor = peak dBFS − RMS dBFS. Always ≥ 0 for valid audio.
@@ -296,7 +281,6 @@ function Set-MetricStatus {
 function Format-Metrics {
     param([PSCustomObject]$m)
 
-    # FIX: Removed dead ClippedSamples -eq "N/A" guard; ClippedSamples is always [int], never "N/A".
     if ($m.Peak -eq "N/A" -or $m.RMS -eq "N/A" -or $m.Crest -eq "N/A") {
         return @("- Metrics unavailable for this track")
     }
@@ -372,7 +356,6 @@ function Format-Metrics {
     }
 
     # Preroll interpretation — TrueHD only; included when StartTime is present on the result object.
-    $startTime = $null
     $stProp = $m.PSObject.Properties['StartTime']
     if ($null -ne $stProp -and $m.Codec -eq 'truehd') {
         $prerollMs = [int][Math]::Round([double]$stProp.Value * 1000)
@@ -417,7 +400,7 @@ if ($fileDuration -gt 0) {
 
 # --- Probe audio streams ---
 
-Write-Done "Probing audio streams in: $InputFile"
+Write-Host "Probing audio streams in: $InputFile" -ForegroundColor DarkCyan
 
 # start_time added to show_entries to support TrueHD preroll reporting.
 $probe = & $ffprobe -v error -select_streams a `
@@ -429,7 +412,6 @@ if (-not $probe) {
     exit 1
 }
 
-# Build audio stream list
 $audioStreams = $probe | ForEach-Object {
     $p = $_.Split(",")
     if ($p.Count -lt 3) { return }
@@ -460,11 +442,11 @@ foreach ($s in $audioStreams) {
 
 # Filter supported codecs
 $supported = $audioStreams | Where-Object {
-    $_.Codec -in @("truehd", "aac", "eac3", "dts")
+    $_.Codec -in @("truehd", "aac", "eac3", "dts", "opus")
 }
 
 if ($supported.Count -eq 0) {
-    Write-Err "No supported audio codecs found (truehd, aac, eac3, dts)."
+    Write-Err "No supported audio codecs found (truehd, aac, eac3, dts, opus)."
     exit 1
 }
 
@@ -478,6 +460,9 @@ $codecDisplayMap = @{
     'aac:6'    = 'AAC 5.1'
     'eac3:6'   = 'Dolby Digital Plus 5.1'
     'eac3:8'   = 'Dolby Digital Plus 7.1'
+    'eac3:2'   = 'Dolby Digital Plus 2.0'
+    'opus:2'   = 'Opus 2.0'
+    'aac:2'    = 'AAC 2.0'
 }
 
 Write-Section "Supported audio streams detected:"
@@ -492,6 +477,9 @@ foreach ($s in $supported) {
 $source  = $supported | Where-Object { $_.Codec -in @("truehd","aac","dts") -and $_.Channels -eq 8 } | Select-Object -First 1
 $downmix = $supported | Where-Object { $_.Codec -eq "eac3" -and $_.Channels -eq 6 } | Select-Object -First 1
 $aac51   = $supported | Where-Object { $_.Codec -eq "aac"  -and $_.Channels -eq 6 } | Select-Object -First 1
+$opus20  = $supported | Where-Object { $_.Codec -eq "opus" -and $_.Channels -eq 2 } | Select-Object -First 1
+$eac320  = $supported | Where-Object { $_.Codec -eq "eac3" -and $_.Channels -eq 2 } | Select-Object -First 1
+$aac20   = $supported | Where-Object { $_.Codec -eq "aac"  -and $_.Channels -eq 2 } | Select-Object -First 1
 
 # The script sets the source label once so later analysis sections do not repeat that work.
 $srcLabel = if ($source) {
@@ -537,14 +525,38 @@ if ($aac51 -and -not ($source -and $downmix)) {
         ModeName = 'AAC 5.1'
     })
 }
+# Stereo tracks (Opus 2.0, DDP 2.0) typically serve a distinct role from the 5.1
+# downmix (commentary, secondary stereo), so they are always analyzed when present.
+if ($opus20) {
+    $analyzable.Add([PSCustomObject]@{
+        Stream   = $opus20
+        Label    = 'Opus 2.0'
+        Suffix   = 'opus20'
+        ModeName = 'Opus 2.0'
+    })
+}
+if ($eac320) {
+    $analyzable.Add([PSCustomObject]@{
+        Stream   = $eac320
+        Label    = 'Dolby Digital Plus 2.0'
+        Suffix   = 'eac320'
+        ModeName = 'DDP 2.0'
+    })
+}
+if ($aac20) {
+    $analyzable.Add([PSCustomObject]@{
+        Stream   = $aac20
+        Label    = 'AAC 2.0'
+        Suffix   = 'aac20'
+        ModeName = 'AAC 2.0'
+    })
+}
 
 if ($analyzable.Count -eq 0) {
-    Write-Err "Supported codecs found, but no valid 7.1 or 5.1 combination."
+    Write-Err "Supported codecs found, but no valid 7.1, 5.1, or 2.0 combination."
     exit 1
 }
 
-# Mode message — exactly matches v4.13 wording for the three legacy combinations
-# (source+downmix, source-only, downmix-only) and extends naturally for the new modes.
 $modeDesc = if ($analyzable.Count -eq 1) {
     "Single-track analysis ($($analyzable[0].ModeName) only)."
 } elseif ($analyzable.Count -eq 2) {
@@ -569,18 +581,20 @@ foreach ($a in $analyzable) {
 # Build JSON Schema 
 # ==================
 
-# Build schema-driven structure
 $schema = [PSCustomObject]@{
     file     = $InputFile
     duration = $fileDuration
     analysis = [ordered]@{}
 }
 
-# Insert each analyzed track into the schema (source, downmix, or aac51)
+# Insert each analyzed track into the schema (source, downmix, aac51, opus20, eac320, aac20)
 foreach ($r in $results) {
     $role = if ($r.Label -like "Source*") { "source" }
             elseif ($r.Label -like "Downmix*") { "downmix" }
             elseif ($r.Label -eq "AAC 5.1") { "aac51" }
+            elseif ($r.Label -eq "Opus 2.0") { "opus20" }
+            elseif ($r.Label -eq "Dolby Digital Plus 2.0") { "eac320" }
+            elseif ($r.Label -eq "AAC 2.0") { "aac20" }
             else { "track$($r.MapIndex)" }
 
     # Build metrics object; preroll_ms added for TrueHD source tracks only.

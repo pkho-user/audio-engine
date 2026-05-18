@@ -1,5 +1,5 @@
 # ==================================================================
-#  ConvertAudioEngine-Keep71.ps1 — (Version 2.9.6) Production-daily use
+#  ConvertAudioEngine-Keep71.ps1 — (Version 2.9.8) Production-daily use
 #  PowerShell 7.6+ Required
 #  FFmpeg 8.1 Compatible
 #  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
@@ -377,6 +377,69 @@ function Resolve-AudioRule {
     return $null
 }
 
+# --- Malformed-Layout Guard Helpers ---
+function New-RemovedTrack {
+    param(
+        $TrackIndex, $RealIndex, $Codec, $Channels,
+        $Profile, $Title, $Lang,
+        $Rule
+    )
+
+    [PSCustomObject]@{
+        Index=$TrackIndex; RealIndex=$RealIndex; Codec=$Codec; Channels=$Channels
+        Profile=$Profile; Title=$Title; Language=$Lang
+        Action="Removed"; Passthrough=$false; Downmix=$false
+        Bitrate=$null; PassthroughTag=$null; Output="Malformed"
+        Rule=$Rule; Priority=0; NeedsNormalization=$false
+    }
+}
+
+function Apply-MalformedLayoutGuards {
+    param(
+        [Parameter(Mandatory)][string]$Codec,
+        [Parameter(Mandatory)][int]   $Channels,
+        [Parameter(Mandatory)][int]   $RealIndex
+    )
+
+    $rule = $null
+
+    switch -Regex ($Codec) {
+
+        '^aac$' {
+            if ($Channels -eq 7) { $Channels = 6; $rule = "AAC_MalformedLayout_Guard" }
+        }
+
+        '^eac3$' {
+            if ($Channels -eq 7) { $Channels = 6; $rule = "EAC3_MalformedLayout_Guard" }
+        }
+
+        '^(mlp|truehd|true-hd)$' {
+            if ($Channels -eq 7) { $Channels = 8; $rule = "TrueHD_MalformedLayout_Guard" }
+        }
+
+        '^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$' {
+            if ($Channels -eq 7) { $Channels = 8; $rule = "PCMFLAC_MalformedLayout_Guard" }
+        }
+
+        '^ac3$' {
+            if ($Channels -eq 7) {
+                Write-Warning "Malformed AC3 7ch on track $RealIndex — removed."
+                return [pscustomobject]@{
+                    Channels  = $Channels
+                    Rule      = 'AC3_Malformed_Removed'
+                    SkipTrack = $true
+                }
+            }
+        }
+    }
+
+    [pscustomobject]@{
+        Channels  = $Channels
+        Rule      = $rule
+        SkipTrack = $false
+    }
+}
+
 # =============================
 #  PROCESS TRACKS
 # =============================
@@ -399,30 +462,15 @@ function Convert-AudioTracks {
         $RealIndex = $s.index
         $Rule      = $null
 
-        # --- Malformed Layout Guards (include 7ch) ---
-        # DO NOT REMOVE — these guards correct invalid 7ch layouts reported by several decoders.
-        # AAC 7ch layouts are malformed and forced to 6ch for correct rule matching.
-        # EAC3 7ch layouts are invalid and remapped to 6ch before processing.
-        # TrueHD never reports seven channels, so 7ch is corrected to the canonical 8ch layout.
-        # PCM and FLAC 7ch layouts are corrected to 8ch to match canonical decoder output behavior.
-        if ($Codec -eq "aac" -and $Channels -eq 7) {
-            $Channels = 6
-            $Rule = "AAC_MalformedLayout_Guard"
-        }
+        # --- Centralized Malformed-Layout Guard Module ---
+        $guard = Apply-MalformedLayoutGuards -Codec $Codec -Channels $Channels -RealIndex $RealIndex
+        $Channels = $guard.Channels
+        if ($guard.Rule) { $Rule = $guard.Rule }
 
-        if ($Codec -eq "eac3" -and $Channels -eq 7) {
-            $Channels = 6
-            $Rule = "EAC3_MalformedLayout_Guard"
-        }
-
-        if ($Codec -match "^(mlp|truehd|true-hd)$" -and $Channels -eq 7) {
-            $Channels = 8
-            $Rule = "TrueHD_MalformedLayout_Guard"
-        }
-
-        if ($Codec -match "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$" -and $Channels -eq 7) {
-            $Channels = 8
-            $Rule = "PCMFLAC_MalformedLayout_Guard"
+        if ($guard.SkipTrack) {
+            $removed = New-RemovedTrack $TrackIndex $RealIndex $Codec $Channels $Profile $Title $Lang $Rule
+            $Processed.Add($removed)
+            $TrackIndex++; continue
         }
 
         # --- Commentary removal ---
@@ -558,7 +606,7 @@ function Build-FFmpegCommand {
     param($Tracks, $InputFile, $ThreadCount)
 
     $ffArgs = [System.Collections.Generic.List[string]]::new()
-    $loudnorm = "loudnorm=I=-24:TP=-1.5:LRA=11"  # SPN: applied only when NeedsNormalization=$true
+    $loudnorm = "loudnorm=I=-23:TP=-1.5:LRA=11"  # SPN: applied only when NeedsNormalization=$true
 
     # ------------------------------------------------------------------
     #  Global options
@@ -568,6 +616,8 @@ function Build-FFmpegCommand {
     # ------------------------------------------------------------------
     $ffArgs.AddRange([string[]](
         "-y",
+        "-loglevel",             "warning",
+        "-stats",
         "-threads",              $ThreadCount,
         "-analyzeduration",      "200M",         # ensures 7.1 channel layout fully parsed (TrueHD+AAC)
         "-probesize",            "200M",         # raised from 100M

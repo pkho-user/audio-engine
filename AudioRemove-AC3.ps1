@@ -1,5 +1,5 @@
 # ============================================================
-# Script     : AudioRemove-AC3.ps1 — (Version 3.2)
+# Script     : AudioRemove-AC3.ps1 — (Version 3.3)
 # Overview   : Pure remux (no re-encode).
 #
 # Purpose    : Remove all AC3 and E-AC3 audio streams (typically low-bitrate).
@@ -60,10 +60,8 @@ if (-not (Test-Path -LiteralPath $InputFile)) {
 # Input / output paths
 # ----------------------
 
-# Resolve full absolute path to input file
 $fullInput = [System.IO.Path]::GetFullPath($InputFile)
 
-# Extract folder + base name
 $outDir  = [System.IO.Path]::GetDirectoryName($fullInput)
 $base    = [System.IO.Path]::GetFileNameWithoutExtension($fullInput)
 
@@ -148,9 +146,9 @@ $AC3Codecs = @('ac3', 'eac3')
 #   3. Language values are cleaned up (trim + lowercase) for consistent comparison.
 $Tracks = @(
     $streams | ForEach-Object {
-        $tagsObj = Get-PropSafe $_ 'tags'                        # Layer 1: safe tags access
-        $rawLang = Get-PropSafe $tagsObj 'language'              # Layer 2: safe language access
-        $lang    = ($rawLang -is [string] -and $rawLang.Trim().Length -gt 0) ? $rawLang.Trim().ToLower() : $null   # Layer 3: clean up
+        $tagsObj = Get-PropSafe $_ 'tags'
+        $rawLang = Get-PropSafe $tagsObj 'language'
+        $lang    = ($rawLang -is [string] -and $rawLang.Trim().Length -gt 0) ? $rawLang.Trim().ToLower() : $null
 
         [pscustomobject]@{
             Index      = $_.index
@@ -177,7 +175,6 @@ $AudioTracks = @($Tracks | Where-Object { $_.IsAudio })
 $keepAudio   = @($AudioTracks | Where-Object { -not $_.IsAC3 })
 $dropAudio   = @($AudioTracks | Where-Object { $_.IsAC3 })
 
-# Early exits
 if ($dropAudio.Count -eq 0) {
     Write-Host "No AC3/E-AC3 audio streams found -- nothing to remove. Exiting."
     exit 0
@@ -189,8 +186,8 @@ if ($keepAudio.Count -eq 0) {
 }
 
 # Logging
-Write-Host "Keeping audio  (global stream index): $($keepAudio.Index -join ', ')" -ForegroundColor Green
-Write-Host "Dropping AC3   (global stream index): $($dropAudio.Index -join ', ')" -ForegroundColor Red
+Write-Host "Keeping audio  (global stream index): $($keepAudio.Index -join ', ')" -ForegroundColor DarkCyan
+Write-Host "Dropping AC3   (global stream index): $($dropAudio.Index -join ', ')" -ForegroundColor DarkCyan
 
 # Subtitles: English + untagged
 $SubTracks    = @($Tracks | Where-Object { $_.IsSubtitle })
@@ -210,13 +207,11 @@ if ($engSubs.Count -eq 0) {
     }
 }
 
-# Attachments
 $AttachTracks = @($Tracks | Where-Object { $_.IsAttach })
 if ($AttachTracks.Count -gt 0) {
     Write-Host "Keeping attachment stream(s): $($AttachTracks.Index -join ', ')"
 }
 
-# Data streams (warning only-dropped)
 $DataTracks = @($Tracks | Where-Object { $_.IsData })
 if ($DataTracks.Count -gt 0) {
     Write-Warning "Data stream(s) detected at index/indices ($($DataTracks.Index -join ', ')) -- these will be DROPPED from the output."
@@ -278,11 +273,10 @@ if ($engSubs.Count -eq 0) {
 } else {
     $subMapArgs = New-MapArgs $engSubs
     if ($SubtitleInfo -eq 'Enable') {
-        Write-Host "Keeping English subtitle stream(s): $($engSubs.Index -join ', ')" -ForegroundColor Green
+        Write-Host "Keeping English subtitle stream(s): $($engSubs.Index -join ', ')" -ForegroundColor DarkCyan
     }
 }
 
-# Attachment map args
 $attachMapArgs = @()
 if ($AttachTracks.Count -gt 0) {
     $attachMapArgs = New-MapArgs $AttachTracks
@@ -328,9 +322,10 @@ $ffArgs += @(
 # ======================
 # ENGINE: Execute FFmpeg
 # ======================
-Write-Host "`nFFmpeg command (reference):"
 $displayArgs = $ffArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
-Write-Host "ffmpeg $($displayArgs -join ' ')`n"
+Write-Verbose "FFmpeg command (reference): ffmpeg $($displayArgs -join ' ')"
+
+$inputBytes = (Get-Item -LiteralPath $fullInput).Length
 
 & $ffmpeg @ffArgs
 
@@ -338,7 +333,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "FFmpeg exited with code $LASTEXITCODE."
 }
 
+$outputBytes = (Get-Item -LiteralPath $OutputFile).Length
+$savedMiB    = ($inputBytes - $outputBytes) / 1MB
 Write-Host "`nDone. Output: $OutputFile" -ForegroundColor Green
+$absMiB      = [Math]::Abs($savedMiB)
+$savedLabel  = $savedMiB -ge 0 ? "saved $("{0:N0}" -f $absMiB) MiB" : "overhead +$("{0:N0}" -f $absMiB) MiB"
+Write-Host ("Size : {0:N0} MiB → {1:N0} MiB  ($savedLabel)" -f ($inputBytes/1MB), ($outputBytes/1MB)) -ForegroundColor DarkCyan
 
 # ======================
 # ENGINE: Summary Engine
@@ -348,6 +348,10 @@ Write-Host ""
 $header = "{0,-4} {1,-20} {2,-10} {3}" -f "Idx", "Codec", "Action", "Rule"
 Write-Host $header -ForegroundColor White
 Write-Host ("-" * 52) -ForegroundColor Yellow
+$VideoTracks = @($Tracks | Where-Object { $_.Type -eq 'video' })
+foreach ($t in $VideoTracks) {
+    Write-Host ("{0,-4} {1,-20} {2,-10} {3}" -f $t.Index, $t.Codec, 'Kept', 'Video passthrough') -ForegroundColor White
+}
 foreach ($t in $AudioTracks) {
 
     $Action = $t.IsAC3 ? "Removed"      : "Kept"
@@ -360,9 +364,7 @@ foreach ($t in $AudioTracks) {
 
 # ---- SUBTITLES (English + untagged only) ----
 if ($SubtitleInfo -eq 'Enable') {
-    foreach ($t in $SubTracks) {
-
-        if (-not $t.IsEnglish -and -not $t.IsUntagged) { continue }
+    foreach ($t in $engSubs) {
 
         $Action = "Kept"
         $Rule   = $t.IsEnglish ? "English subtitle" : "Untagged subtitle"

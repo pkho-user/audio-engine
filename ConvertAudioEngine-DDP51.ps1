@@ -1,5 +1,5 @@
 # ========================================================================
-#  ConvertAudioEngine-DDP51 — (Version 2.9.6) Production-daily use
+#  ConvertAudioEngine-DDP51 — (Version 2.9.8) Production-daily use
 #  PowerShell 7.6 Required
 #  FFmpeg 8.1 Compatible
 #
@@ -216,7 +216,11 @@ $Rules_TrueHD = @(
 
 # DTS FAMILY
 $Rules_DTS = @(
-    # Rule1: DTS-HD Multichannel → Encode at 1024k
+    # DTS-HD MA/HRA Multichannel (5.1 and 7.1) → Encode at 1024k
+    # MoreThanTwo (gt 2) intentionally covers both 6ch and 8ch DTS-HD.
+    # DTS-HD MA/HRA is a lossless source — 1024k is applied regardless of
+    # whether the input is 5.1 or 7.1. This is a deliberate design choice;
+    # DTS Core multichannel gets 768k (Rule2) as a separate lower-tier rule.
     [PSCustomObject]@{
         CodecRegex     = "^(dts)$"
         Channels       = [ChannelFilter]::MoreThanTwo
@@ -308,7 +312,6 @@ $AudioRules = $Rules_EAC3_Atmos + $Rules_TrueHD + $Rules_DTS + $Rules_AAC + $Rul
 # Priority sort
 $AudioRules = $AudioRules | Sort-Object { $_.Priority } -Descending
 
-# Precompile regex
 $AudioRules = $AudioRules | Select-Object -Property *,
     @{ Name='CodecRegexObj';   Expression={
         $_.CodecRegex   ? [regex]::new($_.CodecRegex,   'IgnoreCase,Compiled') : $null
@@ -388,6 +391,70 @@ function Resolve-AudioRule {
     return $null
 }
 
+# --- Malformed-Layout Guard Helpers ---
+function New-RemovedTrack {
+    param(
+        $TrackIndex, $RealIndex, $Codec, $Channels,
+        $Profile, $Title, $Lang,
+        $Rule
+    )
+
+    [PSCustomObject]@{
+        Index=$TrackIndex; RealIndex=$RealIndex; Codec=$Codec; Channels=$Channels
+        Profile=$Profile; Title=$Title; Language=$Lang
+        Action="Removed"; Passthrough=$false; Downmix=$false
+        Bitrate=$null; PassthroughTag=$null; Output="Malformed"
+        Rule=$Rule; Priority=0
+        NeedsNormalization=$false; NeedsSpnScan=$false
+    }
+}
+
+function Apply-MalformedLayoutGuards {
+    param(
+        [Parameter(Mandatory)][string]$Codec,
+        [Parameter(Mandatory)][int]   $Channels,
+        [Parameter(Mandatory)][int]   $RealIndex
+    )
+
+    $rule = $null
+
+    switch -Regex ($Codec) {
+
+        '^aac$' {
+            if ($Channels -eq 7) { $Channels = 6; $rule = "AAC_MalformedLayout_Guard" }
+        }
+
+        '^eac3$' {
+            if ($Channels -eq 7) { $Channels = 6; $rule = "EAC3_MalformedLayout_Guard" }
+        }
+
+        '^(mlp|truehd|true-hd)$' {
+            if ($Channels -eq 7) { $Channels = 8; $rule = "TrueHD_MalformedLayout_Guard" }
+        }
+
+        '^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$' {
+            if ($Channels -eq 7) { $Channels = 8; $rule = "PCMFLAC_MalformedLayout_Guard" }
+        }
+
+        '^ac3$' {
+            if ($Channels -eq 7) {
+                Write-Warning "Malformed AC3 7ch on track $RealIndex — removed."
+                return [pscustomobject]@{
+                    Channels  = $Channels
+                    Rule      = 'AC3_Malformed_Removed'
+                    SkipTrack = $true
+                }
+            }
+        }
+    }
+
+    [pscustomobject]@{
+        Channels  = $Channels
+        Rule      = $rule
+        SkipTrack = $false
+    }
+}
+
 # =============================
 #  PROCESS TRACKS
 # =============================
@@ -416,30 +483,15 @@ function Convert-AudioTracks {
         $RealIndex = $s.index
         $Rule = $null
 
-        # --- Malformed Layout Guards (include 7ch) ---
-        # DO NOT REMOVE — these guards correct invalid 7ch layouts reported by several decoders.
-        # AAC 7ch layouts are malformed and forced to 6ch for correct rule matching.
-        # EAC3 7ch layouts are invalid and remapped to 6ch before processing.
-        # TrueHD never reports seven channels, so 7ch is corrected to the canonical 8ch layout.
-        # PCM and FLAC 7ch layouts are corrected to 8ch to match canonical decoder output behavior.
-        if ($Codec -eq "aac" -and $Channels -eq 7) {
-            $Channels = 6
-            $Rule = "AAC_MalformedLayout_Guard"
-        }
+        # --- Centralized Malformed-Layout Guard Module ---
+        $guard = Apply-MalformedLayoutGuards -Codec $Codec -Channels $Channels -RealIndex $RealIndex
+        $Channels = $guard.Channels
+        if ($guard.Rule) { $Rule = $guard.Rule }
 
-        if ($Codec -eq "eac3" -and $Channels -eq 7) {
-            $Channels = 6
-            $Rule = "EAC3_MalformedLayout_Guard"
-        }
-
-        if ($Codec -match "^(mlp|truehd|true-hd)$" -and $Channels -eq 7) {
-            $Channels = 8
-            $Rule = "TrueHD_MalformedLayout_Guard"
-        }
-
-        if ($Codec -match "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$" -and $Channels -eq 7) {
-            $Channels = 8
-            $Rule = "PCMFLAC_MalformedLayout_Guard"
+        if ($guard.SkipTrack) {
+            $removed = New-RemovedTrack $TrackIndex $RealIndex $Codec $Channels $Profile $Title $Lang $Rule
+            $PendingTracks.Add($removed)
+            $TrackIndex++; continue
         }
 
         # --- Commentary removal ---
@@ -504,11 +556,8 @@ function Convert-AudioTracks {
     # PHASE B - Parallel SPN peak scans 
     # Parallel runspaces cannot access script scope and require explicit captures.
     # The peak scan logic is inlined because helper functions cannot run inside runspaces.
-    # Peak results are stored in a concurrent dictionary keyed by each track’s real index.
-    # Scan messages are stored in a concurrent bag that preserves thread-safe collection behavior.
     # No Write-Host calls are allowed inside the parallel block to avoid runspace output issues.
     # No pending-track mutations are allowed inside the parallel block to prevent race conditions.
-    # All shared state changes occur only after Phase B completes in the sequential merge stage.
     # -------------------------------------------------------------------
     $spnCount = @($PendingTracks | Where-Object { $_.NeedsSpnScan }).Count
     if ($spnCount -gt 0) {
@@ -531,6 +580,7 @@ function Convert-AudioTracks {
 
         $label    = "Track $($t.RealIndex) ($($t.Codec), $($t.Channels)ch)"
         $messages = [System.Collections.Generic.List[object]]::new()
+        # Per-track message intentional — provides feedback during long individual scans.
         $messages.Add([PSCustomObject]@{
             Text  = "[SPN] Scanning peak: $label - may take a few minutes..."
             Color = "Cyan"
@@ -582,7 +632,6 @@ function Convert-AudioTracks {
 
     # -------------------------------------------------------------------
     # PHASE C - Sequential merge
-    # Iterates $PendingTracks in original source order.
     # NeedsNormalization resolved from $PeakResults via TryGetValue.
     # NeedsSpnScan is internal scaffolding - stripped from $Processed output.
     # -------------------------------------------------------------------
@@ -617,7 +666,7 @@ function Build-FFmpegCommand {
     )
 
     $ffArgs   = [System.Collections.Generic.List[string]]::new()
-    $loudnorm = "loudnorm=I=-24:TP=-1.5:LRA=11"  # SPN: applied only when NeedsNormalization=$true
+    $loudnorm = "loudnorm=I=-23:TP=-1.5:LRA=11"  # SPN: applied only when NeedsNormalization=$true
 
     # ------------------------------------------------------------------
     #  Global options
@@ -627,14 +676,16 @@ function Build-FFmpegCommand {
     # ------------------------------------------------------------------
     $ffArgs.AddRange([string[]](
         "-y",
+        "-loglevel",             "warning",
+        "-stats",
         "-threads",              $ThreadCount,
         "-analyzeduration",      "200M",         # ensures TrueHD channel layout fully parsed
-        "-probesize",            "200M",         # raised from 100M
+        "-probesize",            "200M",
         "-err_detect",           "ignore_err",
         "-drc_scale",            "0",
         "-i",                    $InputFile,
-        "-avoid_negative_ts",    "make_zero",    # clamps negative TrueHD PTS to zero
-        "-max_muxing_queue_size","14000",        # stops video flooding mux queue when audio is slow
+        "-avoid_negative_ts",    "make_zero",
+        "-max_muxing_queue_size","14000",
         "-map",                  "0:v?",
         "-c:v",                  "copy",
         "-map_metadata",         "0",
@@ -657,8 +708,6 @@ function Build-FFmpegCommand {
         }
         elseif ($t.Downmix) {
             # --- 7.1 → 5.1 DOWNMIX PATH ---
-            # (4) see header note
-            # Dolby DRC is disabled. Final output is encoded as DD+ 5.1.
             # Downmixes 7.1 audio to EAC3 using ITU-R BS.775 matrix
             # Side (SL/SR) are folded into the rear (BL/BR) with -3 dB attenuation
             # alimiter catches post-pan peaks exceeding -0.47 dBFS (attack=5ms, release=50ms)
@@ -676,6 +725,12 @@ function Build-FFmpegCommand {
             $t.Output = "DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
         }
         elseif ($t.Channels -le 2) {
+            # --- STEREO (2.0) ENCODE PATH ---
+            # -dsur_mode 1: Signals the EAC3 bitstream as Dolby Surround compatible.
+            #   Tells the receiver the 2.0 track contains matrixed surround information
+            #   (Pro Logic II), allowing it to expand the soundstage on surround systems.
+            #   This is intentional — applied globally to all 2.0 output for receiver compatibility.
+            # -stereo_rematrixing 1: Balances L/R channels correctly during the stereo encode.
             if ($t.NeedsNormalization) {
                 $ffArgs.AddRange([string[]]("-filter:a:$i", $loudnorm))
             }
@@ -684,8 +739,8 @@ function Build-FFmpegCommand {
                 "-ac",                "2",
                 "-b:a:$i",            $t.Bitrate,
                 "-dialnorm",          "-31",
-                "-dsur_mode",         "1",           # Dolby Surround Mode, for EAC3 encoder.
-                "-stereo_rematrixing","1",            # Explicitly enable rematrixing
+                "-dsur_mode",         "1",
+                "-stereo_rematrixing","1",
                 "-metadata:s:a:$i",   "title=DD+ 2.0 ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
@@ -785,13 +840,10 @@ foreach ($t in $tracks) {
         default       { $t.Action }
     }
 
-    # Build output label
     $OutputLabel = $t.Output ? $t.Output : "(none)"
 
-    # Show "-" for removed tracks, otherwise priority.
     $PriLabel = $t.Action -eq "Removed" ? "-" : $t.Priority
 
-    # Final formatted line
     $line = "{0,-4} {1,-8} {2,-5} {3,-16} {4,-40} {5,-5} {6}" -f `
         $t.Index, $t.Codec, $t.Channels, $ActionLabel, $OutputLabel, $PriLabel, $t.Rule
 
