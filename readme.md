@@ -14,7 +14,7 @@ Designed for home theater users who want clean, consistent audio without writing
 
 ## Requirements
 
-- **PowerShell 7.6**
+- **PowerShell 7.6** **https://github.com/PowerShell/PowerShell/releases/download/v7.6.1/PowerShell-7.6.1-win-x64.msi**
 - **FFmpeg 8.1 or newer** — Place **ffmpeg** and **ffprobe** in the same folder as the script. You can grab the latest builds from the official FFmpeg download page: **https://ffmpeg.org/download.html**
 - **Runs on:** Windows 10/11, macOS, Linux
 
