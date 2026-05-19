@@ -1,5 +1,5 @@
 # ============================================================
-# Script     : AudioRemove-AC3.ps1 — (Version 3.3)
+# Script     : AudioRemove-AC3.ps1 — (Version 3.5)
 # Overview   : Pure remux (no re-encode).
 #
 # Purpose    : Remove all AC3 and E-AC3 audio streams (typically low-bitrate).
@@ -10,7 +10,7 @@
 #
 # Retains    : English + untagged subtitles,
 #              all attachment streams (fonts, cover art).
-# Drops      : non-English subtitles.
+# Drop/Keep  : (False: drops non-English subtitles / True: Keeps all subtitles)
 #
 # Usage (Windows)     : pwsh -ExecutionPolicy Bypass -File .\AudioRemove-AC3.ps1 ".\YourMovie.mkv"
 # Usage (macOS/Linux) : pwsh -File ./AudioRemove-AC3.ps1 "./YourMovie.mkv"
@@ -29,7 +29,9 @@ param(
     [string]$InputFile,
 
     [ValidateSet('Enable','Disable')]
-    [string]$SubtitleInfo = 'Enable'  # Show subtitle stream info in console output
+    [string]$SubtitleInfo = 'Enable', # Show subtitle stream info in console output
+
+    [switch]$KeepAllSubs = $false     # ($False=Drops non-Eng subtitle, $True=Keeps all subtitles)
 )
 
 # Enable strict mode; halt on any error.
@@ -88,7 +90,7 @@ function Get-StreamInfo {
 
     $probeArgs = @(
         '-v',            'error'
-        '-show_entries', 'stream=index,codec_type,codec_name:stream_tags=language'
+        '-show_entries', 'stream=index,codec_type,codec_name:stream_tags=language,title'
         '-of',           'json'
         $File
     )
@@ -155,6 +157,7 @@ $Tracks = @(
             Type       = $_.codec_type
             Codec      = $_.codec_name
             Language   = $lang
+            Title      = (Get-PropSafe $tagsObj 'title')
             IsAC3      = ($_.codec_type -eq 'audio' -and $_.codec_name -in $AC3Codecs)
             IsAudio    = ($_.codec_type -eq 'audio')
             IsSubtitle = ($_.codec_type -eq 'subtitle')
@@ -201,11 +204,13 @@ if ($untaggedSubs.Count -gt 0) {
     $engSubs = @(($engSubs + $untaggedSubs) | Sort-Object Index)
 }
 
-if ($engSubs.Count -eq 0) {
+if (-not $KeepAllSubs -and $engSubs.Count -eq 0) {
     if ($SubtitleInfo -eq 'Enable') {
         Write-Warning "No English subtitle streams found -- output will have no subtitles."
     }
 }
+
+$selectedSubs = $KeepAllSubs ? $SubTracks : $engSubs
 
 $AttachTracks = @($Tracks | Where-Object { $_.IsAttach })
 if ($AttachTracks.Count -gt 0) {
@@ -268,12 +273,12 @@ function New-AudioDispositionArgs {
 $audioMapArgs = New-MapArgs $keepAudio
 
 # Subtitle map args
-if ($engSubs.Count -eq 0) {
+if ($selectedSubs.Count -eq 0) {
     $subMapArgs = @()
 } else {
-    $subMapArgs = New-MapArgs $engSubs
+    $subMapArgs = New-MapArgs $selectedSubs
     if ($SubtitleInfo -eq 'Enable') {
-        Write-Host "Keeping English subtitle stream(s): $($engSubs.Index -join ', ')" -ForegroundColor DarkCyan
+        Write-Host "Keeping subtitle stream(s): $($selectedSubs.Index -join ', ')" -ForegroundColor DarkCyan
     }
 }
 
@@ -312,6 +317,13 @@ $ffArgs += $attachMapArgs
 # Give each audio track a single disposition setting.
 # This avoids FFmpeg warnings about overlapping dispositions.
 $ffArgs += New-AudioDispositionArgs $keepAudio.Count
+
+# Stamp MKV native TrackName element for each kept audio track that has a title.
+# Ensures VLC and other players display the track name correctly regardless of
+# whether the source stored it in the Tags block or the TrackName element.
+$ffArgs += @(for ($j = 0; $j -lt $keepAudio.Count; $j++) {
+    if ($keepAudio[$j].Title) { "-metadata:s:a:$j"; "title=$($keepAudio[$j].Title)" }
+})
 
 $ffArgs += @(
     '-max_muxing_queue_size',  '14000'       # prevents video flooding mux queue on long files
@@ -374,10 +386,12 @@ if ($SubtitleInfo -eq 'Enable') {
         Write-Host $line -ForegroundColor $Color
     }
 
-    $droppedSubCount = $SubTracks.Count - $engSubs.Count
-    if ($droppedSubCount -gt 0) {
-        $line   = "{0,-4} {1,-20} {2,-10} {3}" -f '—', 'subtitle(s)', 'Dropped', "$droppedSubCount Non-English sub(s)"
-        Write-Host $line -ForegroundColor Yellow
+    $nonEngCount = $SubTracks.Count - $engSubs.Count
+    if ($nonEngCount -gt 0) {
+        $Action = $KeepAllSubs ? 'Kept'   : 'Dropped'
+        $Color  = $KeepAllSubs ? 'Cyan'   : 'Yellow'
+        $line   = "{0,-4} {1,-20} {2,-10} {3}" -f '—', 'subtitle(s)', $Action, "$nonEngCount Non-English sub(s)"
+        Write-Host $line -ForegroundColor $Color
     }
 }
 
