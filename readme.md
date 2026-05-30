@@ -28,9 +28,10 @@ Designed for home theater users who want clean, consistent audio without writing
 |--------|---------|
 | **ConvertAudioEngine-DDP51.ps1** | Converts all audio to DDP 5.1 — passthrough, downmix, or re-encode depending on source |
 | **ConvertAudioEngine-Keep71.ps1** | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
-| **AudioRemove-AC3.ps1** | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
-| **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
 | **ConvertAudio2-Stereo.ps1**| Downmixes any 5.1, 7.1, or Atmos track into a high‑quality EAC3 or Opus stereo file.|
+| **AudioRemove-AC3.ps1** | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
+| **AudioRemove-AC3-mkvmerge.ps1** | Removes low bit-rate AC3/E-AC3 streams using **mkvmerge**
+| **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
 
 ## Quick Start
 
@@ -151,7 +152,7 @@ You can tweak these settings directly in the script:
 
 ## Utility Scripts
 
-### AudioRemove-AC3.ps1
+### AudioRemove-AC3.ps1 - Uses FFMpeg 8.1
 
 Removes all low-bitrate AC3 and E-AC3 audio streams from an MKV, producing a lean master file containing only high-fidelity audio (TrueHD / AAC 7.1 / DTS-HD MA). Run this before the conversion engine if your source contains low-bitrate AC3 compatibility tracks you want to strip first.
 
@@ -162,12 +163,21 @@ pwsh -ExecutionPolicy Bypass -File .\AudioRemove-AC3.ps1 ".\YourMovie.mkv"
 # macOS / Linux
 pwsh -File ./AudioRemove-AC3.ps1 "./YourMovie.mkv"
 ```
-
+**Output:** 
 Output: `YourMovie_remux.mkv`
 
-### AudioPeakRMSChecker.ps1
+### AudioRemove-AC3-mkvmerge.ps1
+Same purpose as above, but uses **mkvmerge** for byte‑identical remuxing.  
+Ideal for users who prefer MKVToolNix or want consistent output.
+
+### AudioRemove-AC3.ps1 - Uses FFMpeg 8.1
 
 Validates audio levels on source and converted tracks. Reports peak level dB, RMS level dB, crest factor, and peak count — with PASS/FAIL evaluation per track. Useful for confirming the conversion engine produced clean, properly leveled output.
+Also has:
+- TrueHD preroll reporting  
+- A/V sync offset detection  
+- Per-track astats logs  
+- JSON output mode for automation
 
 ```powershell
 # Windows
