@@ -170,7 +170,7 @@ Output: `YourMovie_remux.mkv`
 Same purpose as above, but uses **mkvmerge** for byte‑identical remuxing.  
 Ideal for users who prefer MKVToolNix or want consistent output.
 
-### AudioRemove-AC3.ps1 - Uses FFMpeg 8.1
+### AudioPeakRMSChecker.ps1
 
 Validates audio levels on source and converted tracks. Reports peak level dB, RMS level dB, crest factor, and peak count — with PASS/FAIL evaluation per track. Useful for confirming the conversion engine produced clean, properly leveled output.
 Also has:
