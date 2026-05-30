@@ -1,28 +1,37 @@
 # ========================================================================
-#  ConvertAudioEngine-DDP51 — (Version 2.9.8) Production-daily use
-#  PowerShell 7.6 Required
-#  FFmpeg 8.1 Compatible
+#  ConvertAudioEngine-DDP51 v3.0.5 — Production Use
+#  PowerShell 7.6, FFmpeg 8.1
 #
-#  Audio tracks over 5.1 are downmixed (1024k)
-#  EAC3/TrueHD 5.1 passthrough; other 5.1 tracks re-encoded (768k)
-#  Supported audio codecs: AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
-#  Priority Mapping (default 0-100)
-#  5.1 audio downmix using Pan Filter for channel mapping with peak limiter
-#  alimiter set to (.948) changed from (.95)
+#  Foundation: 3-phase SPN architecture (Phase A → Phase B → Phase C)
+#  Includes Safe Peak Normalizer (SPN) and malformed-layout guards.
 #
-#  De-sync for TrueHD 7.1 / long-duration files:
-#  (1) Increase analyzeduration/probesize to 200M for full layout detection
-#      Ensures 7.1 channel layout is fully parsed before encode starts
-#  (2) -avoid_negative_ts make_zero
-#      Clamps any negative initial PTS from TrueHD streams to zero.
-#  (3) -max_muxing_queue_size 14000
-#      Large mux queue to prevent video starving audio pipeline
-#      14000 provides sufficient headroom for 3+ hour files.
-#  (4) aformat=channel_layouts=7.1 prepended to downmix pan filter
-#      Pins the TrueHD decoder output to the canonical 7.1 layout
-#      (FL FR FC LFE BL BR SL SR) before the pan filter reads it.
-#      Guards against Atmos decoder output layout ambiguity.
-#  Added Safe Peak Normalizer (SPN)
+#  Removes all 2.0 tracks (delegated to ConvertAudioEngine-Stereo)
+#
+#  Bitrate tiers (centralized via $BitRateConfig):
+#    • Downmix 7.1 → 5.1 = $BitRateConfig.Downmix51
+#    • Re-encode 5.1 sources = $BitRateConfig.ReEncode51
+#    • DTS-HD MA/HRA multichannel encode = $BitRateConfig.EncodeDTSHD
+#
+#  Processing rules:
+#    • Audio tracks over 5.1 are downmixed ($BitRateConfig.Downmix51)
+#    • EAC3/TrueHD 5.1 passthrough
+#    • Other 5.1 → DD+ 5.1 ($BitRateConfig.ReEncode51)
+#    • DTS-HD MA/HRA → DD+ 5.1 ($BitRateConfig.EncodeDTSHD)
+#
+#  Supported codecs:
+#    AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
+#
+#  Priority mapping: 0–110 (Pass+Copy = highest)
+#
+#  Output:
+#    MKV container with video copy + DD+ 5.1 tracks
+#    (passthrough, downmix, or re-encode depending on rule outcome)
+#
+#  Downmix quality:
+#    ITU-R BS.775 pan matrix for 7.1 → 5.1 accuracy
+#    SL/SR folded into BL/BR at -3 dB for spatial integrity
+#    aformat=channel_layouts=7.1 ensures canonical decoder ordering
+#    alimiter (0.948) prevents post-pan clipping above -0.47 dBFS 
 # ========================================================================
 #Requires -Version 7.6
 
@@ -46,6 +55,20 @@ $CommentaryPattern = [regex]::new(
     'commentary|director|producer|writer|cast|behind|bonus|alt|interview',
     'IgnoreCase,Compiled'
 )
+
+# ========================================
+#  ENGINE: BITRATE CONFIGURATION TABLE
+#  Single source of truth — changes here propagate to rule groups, fallback, and safety clamps.
+#  Common EAC3 5.1: 384,448,512,640,768         (industry-standard streaming bitrates)
+#  Pipeline-specific: 1024,1152,1280,1408,1536  (used for DTS-HD re-encode & 7.1→5.1 downmix)
+#  You can safely adjust these numbers, within "....k"
+# ========================================
+$BitRateConfig = @{
+    Downmix51   = '1152k'   # 7.1 → 5.1 downmix via pan filter
+    ReEncode51  = '768k'    # 5.1 source re-encode
+    EncodeDTSHD = '1024k'   # DTS-HD MA/HRA lossless multichannel encode (5.1 and 7.1)
+    # PassCopy51 entries added in Keep71 script
+}
 
 if ($IsWindows) {
     $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
@@ -105,37 +128,37 @@ class ChannelFilter {
 
 # AAC FAMILY
 $Rules_AAC = @(
-    # Rule1: AAC 7.1 → Downmix to 5.1 at 1024k
+    # Rule1: AAC 7.1 → Downmix to 5.1
     [PSCustomObject]@{
         CodecRegex     = "^(aac)$"
         Channels       = 8
         ProfileRegex   = $null
         Action         = "Downmix"
-        Bitrate        = "1024k"
+        Bitrate        = $BitRateConfig.Downmix51
         PassthroughTag = $null
-        Rule           = "AAC_7.1_Downmix_1024k"
+        Rule           = "AAC_7.1_Downmix_$($BitRateConfig.Downmix51)"
         Priority       = 92
     },
-    # Rule2: AAC 5.1 → Encode at 768k
+    # Rule2: AAC 5.1 → Encode
     [PSCustomObject]@{
         CodecRegex     = "^(aac)$"
         Channels       = 6
         ProfileRegex   = $null
         Action         = "Encode"
-        Bitrate        = "768k"
+        Bitrate        = $BitRateConfig.ReEncode51
         PassthroughTag = $null
-        Rule           = "AAC_5.1_Encode_768k"
+        Rule           = "AAC_5.1_Encode_$($BitRateConfig.ReEncode51)"
         Priority       = 91
     },
-    # Rule3: AAC 2.0 → Encode at 256k
+    # Rule3: AAC 2.0 → REMOVED (delegated to ConvertAudioEngine-Stereo)
     [PSCustomObject]@{
         CodecRegex     = "^(aac)$"
         Channels       = 2
         ProfileRegex   = $null
-        Action         = "Encode"
-        Bitrate        = "256k"
+        Action         = "Removed"
+        Bitrate        = $null
         PassthroughTag = $null
-        Rule           = "AAC_2.0_Encode_256k"
+        Rule           = "AAC_2.0_Removed"
         Priority       = 90
     }
 )
@@ -153,15 +176,15 @@ $Rules_EAC3_Atmos = @(
         Rule           = "EAC3_Atmos_Passthrough"
         Priority       = 100
     },
-    # Rule2: EAC3 7.1 → Downmix to 5.1 at 1024k
+    # Rule2: EAC3 7.1 → Downmix to 5.1
     [PSCustomObject]@{
         CodecRegex     = "^(eac3)$"
         Channels       = 8
         ProfileRegex   = $null
         Action         = "Downmix"
-        Bitrate        = "1024k"
+        Bitrate        = $BitRateConfig.Downmix51
         PassthroughTag = $null
-        Rule           = "EAC3_7.1_Downmix_1024k"
+        Rule           = "EAC3_7.1_Downmix_$($BitRateConfig.Downmix51)"
         Priority       = 99
     },
     # Rule3: EAC3 5.1 → Passthrough
@@ -175,15 +198,15 @@ $Rules_EAC3_Atmos = @(
         Rule           = "EAC3_5.1_Passthrough"
         Priority       = 98
     },
-    # Rule4: EAC3 2.0 → Passthrough
+    # Rule4: EAC3 2.0 → REMOVED (delegated to ConvertAudioEngine-Stereo)
     [PSCustomObject]@{
         CodecRegex     = "^(eac3)$"
         Channels       = 2
         ProfileRegex   = $null
-        Action         = "Passthrough"
+        Action         = "Removed"
         Bitrate        = $null
-        PassthroughTag = "EAC3_2.0_Passthrough"
-        Rule           = "EAC3_2.0_Passthrough"
+        PassthroughTag = $null
+        Rule           = "EAC3_2.0_Removed"
         Priority       = 97
     }
 )
@@ -201,104 +224,103 @@ $Rules_TrueHD = @(
         Rule           = "TrueHD_5.1_Passthrough"
         Priority       = 81
     },
-    # Rule2: TrueHD 7.1 → Downmix to 5.1 at 1024k
+    # Rule2: TrueHD 7.1 → Downmix to 5.1
     [PSCustomObject]@{
         CodecRegex     = "^(mlp|truehd|true-hd)$"
         Channels       = 8
         ProfileRegex   = $null
         Action         = "Downmix"
-        Bitrate        = "1024k"
+        Bitrate        = $BitRateConfig.Downmix51
         PassthroughTag = $null
-        Rule           = "TrueHD_7.1_Downmix_1024k"
+        Rule           = "TrueHD_7.1_Downmix_$($BitRateConfig.Downmix51)"
         Priority       = 80
     }
 )
 
 # DTS FAMILY
 $Rules_DTS = @(
-    # DTS-HD MA/HRA Multichannel (5.1 and 7.1) → Encode at 1024k
+    # DTS-HD MA/HRA Multichannel (5.1 and 7.1) → Encode at EncodeDTSHD bitrate
     # MoreThanTwo (gt 2) intentionally covers both 6ch and 8ch DTS-HD.
-    # DTS-HD MA/HRA is a lossless source — 1024k is applied regardless of
-    # whether the input is 5.1 or 7.1. This is a deliberate design choice;
-    # DTS Core multichannel gets 768k (Rule2) as a separate lower-tier rule.
+    # DTS-HD MA/HRA is a lossless source — EncodeDTSHD is applied regardless of
+    # whether the input is 5.1 or 7.1. This is a deliberate design choice.
     [PSCustomObject]@{
         CodecRegex     = "^(dts)$"
         Channels       = [ChannelFilter]::MoreThanTwo
         ProfileRegex   = "HD|MA|HRA"
         Action         = "Encode"
-        Bitrate        = "1024k"
+        Bitrate        = $BitRateConfig.EncodeDTSHD
         PassthroughTag = $null
-        Rule           = "DTSHD_Multichannel_Encode_1024k"
+        Rule           = "DTSHD_Multichannel_Encode_$($BitRateConfig.EncodeDTSHD)"
         Priority       = 73
     },
-    # Rule2: DTS Multichannel → Encode at 768k
+    # Rule2: DTS Multichannel → Encode
     [PSCustomObject]@{
         CodecRegex     = "^(dts)$"
         Channels       = [ChannelFilter]::MoreThanTwo
         ProfileRegex   = $null
         Action         = "Encode"
-        Bitrate        = "768k"
+        Bitrate        = $BitRateConfig.ReEncode51
         PassthroughTag = $null
-        Rule           = "DTS_Multichannel_Encode_768k"
+        Rule           = "DTS_Multichannel_Encode_$($BitRateConfig.ReEncode51)"
         Priority       = 72
     },
-    # Rule3: DTS-HD 2.0 → Encode at 384k
+    # Rule3: DTS-HD 2.0 → REMOVED (delegated to ConvertAudioEngine-Stereo)
     [PSCustomObject]@{
         CodecRegex     = "^(dts)$"
         Channels       = 2
         ProfileRegex   = "HD|MA|HRA"
-        Action         = "Encode"
-        Bitrate        = "384k"
+        Action         = "Removed"
+        Bitrate        = $null
         PassthroughTag = $null
-        Rule           = "DTSHD_2.0_Encode_384k"
+        Rule           = "DTSHD_2.0_Removed"
         Priority       = 71
     },
-    # Rule4: DTS 2.0 → Encode at 256k
+    # Rule4: DTS 2.0 → REMOVED (delegated to ConvertAudioEngine-Stereo)
     [PSCustomObject]@{
         CodecRegex     = "^(dts)$"
         Channels       = 2
         ProfileRegex   = $null
-        Action         = "Encode"
-        Bitrate        = "256k"
+        Action         = "Removed"
+        Bitrate        = $null
         PassthroughTag = $null
-        Rule           = "DTS_2.0_Encode_256k"
+        Rule           = "DTS_2.0_Removed"
         Priority       = 70
     }
 )
 
 # PCM / FLAC FAMILY
 $Rules_PCMFLAC = @(
-    # Rule1: PCM/FLAC 7.1 → Downmix to 5.1 at 1024k
+    # Rule1: PCM/FLAC 7.1 → Downmix to 5.1
     [PSCustomObject]@{
         CodecRegex     = "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"
         Channels       = 8
         ProfileRegex   = $null
         Action         = "Downmix"
-        Bitrate        = "1024k"
+        Bitrate        = $BitRateConfig.Downmix51
         PassthroughTag = $null
-        Rule           = "PCMFLAC_7.1_Downmix_1024k"
+        Rule           = "PCMFLAC_7.1_Downmix_$($BitRateConfig.Downmix51)"
         Priority       = 62
     },
-    # Rule2: PCM/FLAC 5.1 → Encode at 768k
+    # Rule2: PCM/FLAC 5.1 → Encode
     [PSCustomObject]@{
         CodecRegex     = "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"
         Channels       = 6
         ProfileRegex   = $null
         Action         = "Encode"
-        Bitrate        = "768k"
+        Bitrate        = $BitRateConfig.ReEncode51
         PassthroughTag = $null
-        Rule           = "PCMFLAC_5.1_Encode_768k"
+        Rule           = "PCMFLAC_5.1_Encode_$($BitRateConfig.ReEncode51)"
         Priority       = 61
     },
-    # Rule3: PCM/FLAC 2.0 → Encode at 384k
+    # Rule3: PCM/FLAC 2.0 → REMOVED (delegated to ConvertAudioEngine-Stereo)
     [PSCustomObject]@{
         CodecRegex     = "^(pcm_s16le|pcm_s24le|pcm_f32le|pcm_f32be|flac)$"
         Channels       = 2
         ProfileRegex   = $null
-        Action         = "Encode"
-        Bitrate        = "384k"
+        Action         = "Removed"
+        Bitrate        = $null
         PassthroughTag = $null
-        Rule           = "PCMFLAC_2.0_Encode_384k"
+        Rule           = "PCMFLAC_2.0_Removed"
         Priority       = 60
     }
 )
@@ -520,31 +542,36 @@ function Convert-AudioTracks {
             if (-not $Rule) { $Rule = $match.Rule }
         }
         else {
-            if ($Channels -le 2)      { $Action="Encode";  $Bitrate="256k";  $Rule="Fallback_2.0_256k" }
-            elseif ($Channels -gt 6)  { $Action="Downmix"; $Bitrate="1024k"; $Rule="Fallback_7.1_1024k" }
-            else                      { $Action="Encode";  $Bitrate="768k";  $Rule="Fallback_5.1_768k" }
+            if ($Channels -le 2)      { $Action="Removed"; $Bitrate=$null;  $Rule="Fallback_2.0_Removed" }
+            elseif ($Channels -gt 6)  { $Action="Downmix"; $Bitrate=$BitRateConfig.Downmix51;  $Rule="Fallback_7.1_$($BitRateConfig.Downmix51)" }
+            else                      { $Action="Encode";  $Bitrate=$BitRateConfig.ReEncode51; $Rule="Fallback_5.1_$($BitRateConfig.ReEncode51)" }
             $Passthrough=$false; $Downmix=($Action -eq "Downmix"); $Tag=$null; $Priority=0
         }
 
         # --- Safety Audit ---
-        if ($Channels -eq 6 -and $Bitrate -eq "1024k") {
-            Write-Warning ("Track {0} ({1}): 6ch rule had 1024k-clamped to 768k." -f $TrackIndex,$Codec)
-            $Bitrate = "768k"
+        # Clamps compare against table values to remain in sync after bitrate changes.
+        # DTS-HD MA/HRA at $BitRateConfig.EncodeDTSHD does NOT match $BitRateConfig.Downmix51,
+        # so the 6ch clamp will not fire on legitimate DTS-HD 5.1 tracks.
+        if ($Channels -eq 6 -and $Bitrate -eq $BitRateConfig.Downmix51) {
+            Write-Warning ("Track {0} ({1}): 6ch rule had {2}-clamped to {3}." -f $TrackIndex,$Codec,$BitRateConfig.Downmix51,$BitRateConfig.ReEncode51)
+            $Bitrate = $BitRateConfig.ReEncode51
         }
-        elseif ($Channels -eq 7 -and $Bitrate -eq "768k") {
-            Write-Warning ("Track {0} ({1}): 7ch rule had 768k-clamped to 1024k." -f $TrackIndex,$Codec)
-            $Bitrate = "1024k"
+        elseif ($Channels -eq 7 -and $Bitrate -eq $BitRateConfig.ReEncode51) {
+            Write-Warning ("Track {0} ({1}): 7ch rule had {2}-clamped to {3}." -f $TrackIndex,$Codec,$BitRateConfig.ReEncode51,$BitRateConfig.Downmix51)
+            $Bitrate = $BitRateConfig.Downmix51
         }
-        elseif ($Channels -eq 8 -and $Bitrate -eq "768k") {
-            Write-Warning ("Track {0} ({1}): 8ch rule had 768k-clamped to 1024k." -f $TrackIndex,$Codec)
-            $Bitrate = "1024k"
+        elseif ($Channels -eq 8 -and $Bitrate -eq $BitRateConfig.ReEncode51) {
+            Write-Warning ("Track {0} ({1}): 8ch rule had {2}-clamped to {3}." -f $TrackIndex,$Codec,$BitRateConfig.ReEncode51,$BitRateConfig.Downmix51)
+            $Bitrate = $BitRateConfig.Downmix51
         }
 
         $PendingTracks.Add([PSCustomObject]@{
             Index=$TrackIndex; RealIndex=$RealIndex; Codec=$Codec; Channels=$Channels
             Profile=$Profile; Title=$Title; Language=$Lang; Action=$Action
             Passthrough=$Passthrough; Downmix=$Downmix; Bitrate=$Bitrate
-            PassthroughTag=$Tag; Output=""; Rule=$Rule; Priority=$Priority
+            PassthroughTag=$Tag
+            Output=($Action -eq "Removed" ? "2.0_Removed" : "")
+            Rule=$Rule; Priority=$Priority
             NeedsNormalization=$false
             NeedsSpnScan=($Action -ne "Passthrough" -and $Action -ne "Removed")
         })
@@ -676,10 +703,10 @@ function Build-FFmpegCommand {
     # ------------------------------------------------------------------
     $ffArgs.AddRange([string[]](
         "-y",
-        "-loglevel",             "warning",
+        "-loglevel",             "error",   # changed from warning
         "-stats",
         "-threads",              $ThreadCount,
-        "-analyzeduration",      "200M",         # ensures TrueHD channel layout fully parsed
+        "-analyzeduration",      "200M",
         "-probesize",            "200M",
         "-err_detect",           "ignore_err",
         "-drc_scale",            "0",
@@ -712,7 +739,7 @@ function Build-FFmpegCommand {
             # Side (SL/SR) are folded into the rear (BL/BR) with -3 dB attenuation
             # alimiter catches post-pan peaks exceeding -0.47 dBFS (attack=5ms, release=50ms)
             $pre       = $t.NeedsNormalization ? "$loudnorm," : ""
-            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled"
+            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled:latency=1"
 
             $ffArgs.AddRange([string[]](
                 "-filter:a:$i",     $panFilter,
@@ -723,27 +750,6 @@ function Build-FFmpegCommand {
                 "-metadata:s:a:$i", "title=DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
             ))
             $t.Output = "DD+ 5.1 Downmix ($($t.Bitrate))$LangTag"
-        }
-        elseif ($t.Channels -le 2) {
-            # --- STEREO (2.0) ENCODE PATH ---
-            # -dsur_mode 1: Signals the EAC3 bitstream as Dolby Surround compatible.
-            #   Tells the receiver the 2.0 track contains matrixed surround information
-            #   (Pro Logic II), allowing it to expand the soundstage on surround systems.
-            #   This is intentional — applied globally to all 2.0 output for receiver compatibility.
-            # -stereo_rematrixing 1: Balances L/R channels correctly during the stereo encode.
-            if ($t.NeedsNormalization) {
-                $ffArgs.AddRange([string[]]("-filter:a:$i", $loudnorm))
-            }
-            $ffArgs.AddRange([string[]](
-                "-c:a:$i",            "eac3",
-                "-ac",                "2",
-                "-b:a:$i",            $t.Bitrate,
-                "-dialnorm",          "-31",
-                "-dsur_mode",         "1",
-                "-stereo_rematrixing","1",
-                "-metadata:s:a:$i",   "title=DD+ 2.0 ($($t.Bitrate))$LangTag"
-            ))
-            $t.Output = "DD+ 2.0 ($($t.Bitrate))$LangTag"
         }
         else {
             # --- 5.1 RE-ENCODE PATH ---
@@ -830,11 +836,11 @@ foreach ($t in $tracks) {
         "Passthrough" { "Passthrough" }
         "Downmix"     { "Downmix 5.1" }
         "Encode"      {
-            if     ($t.Bitrate -eq "256k")  { "Encode 256k" }
-            elseif ($t.Bitrate -eq "384k")  { "Encode 384k" }
-            elseif ($t.Bitrate -eq "768k")  { "Encode 768k" }
-            elseif ($t.Bitrate -eq "1024k") { "Encode 1024k" }
-            else                            { "Encode" }
+            if     ($t.Bitrate -eq $BitRateConfig.ReEncode51)  { "Encode $($BitRateConfig.ReEncode51)"  }
+            elseif ($t.Bitrate -eq $BitRateConfig.Downmix51)   { "Encode $($BitRateConfig.Downmix51)"   }
+            elseif ($t.Bitrate -eq $BitRateConfig.EncodeDTSHD) { "Encode $($BitRateConfig.EncodeDTSHD)" }
+            elseif ($t.Bitrate)                                { "Encode $($t.Bitrate)"                  }
+            else                                                { "Encode" }
         }
         "Removed"     { "Removed" }
         default       { $t.Action }

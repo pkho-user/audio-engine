@@ -1,8 +1,8 @@
 # ======================================================================
-#  ConvertAudio2-Stereo (Version 1.3.2) — Production daily use
+#  ConvertAudio2-Stereo (Version 1.4.0) — Production daily use
 #  PowerShell 7.6 | FFmpeg 8.1 | Opus 1.6.1 | EAC3
 #
-#  Foundation: ConvertAudioEngine-DDP51 (3-phase A/B/C SPN architecture)
+#  Foundation: ConvertAudioEngine-DDP51 v3.0.5 (3-phase A/B/C SPN + unified
 #  Stereo 2.0 only output:
 #  EAC3 (default, broad device compatibility)
 #  Opus (better quality-per-bit).
@@ -38,6 +38,16 @@ if (-not $PSBoundParameters.ContainsKey('StereoCodec')) {
 $StereoBitrates = @{
     "EAC3" = "384k"
     "Opus" = "320k"
+}
+
+# $StereoBitrates (EAC3/Opus) controls all bitrate values used throughout the script:
+# the summary display, dynamic Rule strings, conversion rules, and FFmpeg encoding commands.
+# Since the output is always stereo, every key in $StereoBitRateConfig points to the same bitrate,
+# When you update the codec or bitrate setting above, everything else updates automatically.
+$StereoBitRateConfig = @{
+    Downmix71 = $StereoBitrates[$StereoCodec]   # 7.1 / Atmos source → stereo
+    Encode51  = $StereoBitrates[$StereoCodec]   # 5.1 / multichannel source → stereo
+    Encode20  = $StereoBitrates[$StereoCodec]   # 2.0 source → stereo (re-encode)
 }
 
 # LFE fold-in: $true folds LFE into FL+FR at +0.5 gain inside the pan matrix.
@@ -121,9 +131,9 @@ $Rules_AAC = @(
         Channels = 8
         ProfileRegex = $null
         Action = "Downmix"
-        Bitrate = "1024k"
+        Bitrate = $StereoBitRateConfig.Downmix71
         PassthroughTag = $null
-        Rule = "AAC_7.1_to_Stereo"
+        Rule = "AAC_7.1_to_Stereo_$($StereoBitRateConfig.Downmix71)"
         Priority = 92
     },
     [PSCustomObject]@{
@@ -131,9 +141,9 @@ $Rules_AAC = @(
         Channels = 6
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "768k"
+        Bitrate = $StereoBitRateConfig.Encode51
         PassthroughTag = $null
-        Rule = "AAC_5.1_to_Stereo"
+        Rule = "AAC_5.1_to_Stereo_$($StereoBitRateConfig.Encode51)"
         Priority = 91
     },
     [PSCustomObject]@{
@@ -141,24 +151,24 @@ $Rules_AAC = @(
         Channels = 2
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "256k"
+        Bitrate = $StereoBitRateConfig.Encode20
         PassthroughTag = $null
-        Rule = "AAC_2.0_to_Stereo"
+        Rule = "AAC_2.0_to_Stereo_$($StereoBitRateConfig.Encode20)"
         Priority = 90
     }
 )
 
 # EAC3 / ATMOS FAMILY
 $Rules_EAC3_Atmos = @(
-    # Atmos (JOC) — downmixed to stereo. Channel-count routing in Build-FFmpegCommand picks 5.1 or 7.1 pan matrix.
+    # Atmos (JOC) — downmixed to stereo. Build-FFmpegCommand selects the 5.1 or 7.1 pan matrix.
     [PSCustomObject]@{
         CodecRegex = "^(eac3)$"
         Channels = [ChannelFilter]::new("gt", 2)
         ProfileRegex = "JOC|Atmos"
         Action = "Downmix"
-        Bitrate = "1024k"
+        Bitrate = $StereoBitRateConfig.Downmix71
         PassthroughTag = $null
-        Rule = "EAC3_Atmos_to_Stereo"
+        Rule = "EAC3_Atmos_to_Stereo_$($StereoBitRateConfig.Downmix71)"
         Priority = 100
     },
     [PSCustomObject]@{
@@ -166,9 +176,9 @@ $Rules_EAC3_Atmos = @(
         Channels = 8
         ProfileRegex = $null
         Action = "Downmix"
-        Bitrate = "1024k"
+        Bitrate = $StereoBitRateConfig.Downmix71
         PassthroughTag = $null
-        Rule = "EAC3_7.1_to_Stereo"
+        Rule = "EAC3_7.1_to_Stereo_$($StereoBitRateConfig.Downmix71)"
         Priority = 99
     },
     [PSCustomObject]@{
@@ -176,9 +186,9 @@ $Rules_EAC3_Atmos = @(
         Channels = 6
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "768k"
+        Bitrate = $StereoBitRateConfig.Encode51
         PassthroughTag = $null
-        Rule = "EAC3_5.1_to_Stereo"
+        Rule = "EAC3_5.1_to_Stereo_$($StereoBitRateConfig.Encode51)"
         Priority = 98
     },
     # EAC3 2.0 — Conditional passthrough.(StereoCodec=EAC3 required).
@@ -201,9 +211,9 @@ $Rules_TrueHD = @(
         Channels = 6
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "768k"
+        Bitrate = $StereoBitRateConfig.Encode51
         PassthroughTag = $null
-        Rule = "TrueHD_5.1_to_Stereo"
+        Rule = "TrueHD_5.1_to_Stereo_$($StereoBitRateConfig.Encode51)"
         Priority = 81
     },
     [PSCustomObject]@{
@@ -211,9 +221,9 @@ $Rules_TrueHD = @(
         Channels = 8
         ProfileRegex = $null
         Action = "Downmix"
-        Bitrate = "1024k"
+        Bitrate = $StereoBitRateConfig.Downmix71
         PassthroughTag = $null
-        Rule = "TrueHD_7.1_to_Stereo"
+        Rule = "TrueHD_7.1_to_Stereo_$($StereoBitRateConfig.Downmix71)"
         Priority = 80
     }
 )
@@ -225,9 +235,9 @@ $Rules_DTS = @(
         Channels = [ChannelFilter]::MoreThanTwo
         ProfileRegex = "HD|MA|HRA"
         Action = "Encode"
-        Bitrate = "1024k"
+        Bitrate = $StereoBitRateConfig.Downmix71
         PassthroughTag = $null
-        Rule = "DTSHD_Multichannel_to_Stereo"
+        Rule = "DTSHD_Multichannel_to_Stereo_$($StereoBitRateConfig.Downmix71)"
         Priority = 73
     },
     [PSCustomObject]@{
@@ -235,9 +245,9 @@ $Rules_DTS = @(
         Channels = [ChannelFilter]::MoreThanTwo
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "768k"
+        Bitrate = $StereoBitRateConfig.Encode51
         PassthroughTag = $null
-        Rule = "DTS_Multichannel_to_Stereo"
+        Rule = "DTS_Multichannel_to_Stereo_$($StereoBitRateConfig.Encode51)"
         Priority = 72
     },
     [PSCustomObject]@{
@@ -245,9 +255,9 @@ $Rules_DTS = @(
         Channels = 2
         ProfileRegex = "HD|MA|HRA"
         Action = "Encode"
-        Bitrate = "384k"
+        Bitrate = $StereoBitRateConfig.Encode20
         PassthroughTag = $null
-        Rule = "DTSHD_2.0_to_Stereo"
+        Rule = "DTSHD_2.0_to_Stereo_$($StereoBitRateConfig.Encode20)"
         Priority = 71
     },
     [PSCustomObject]@{
@@ -255,9 +265,9 @@ $Rules_DTS = @(
         Channels = 2
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "256k"
+        Bitrate = $StereoBitRateConfig.Encode20
         PassthroughTag = $null
-        Rule = "DTS_2.0_to_Stereo"
+        Rule = "DTS_2.0_to_Stereo_$($StereoBitRateConfig.Encode20)"
         Priority = 70
     }
 )
@@ -269,9 +279,9 @@ $Rules_PCMFLAC = @(
         Channels = 8
         ProfileRegex = $null
         Action = "Downmix"
-        Bitrate = "1024k"
+        Bitrate = $StereoBitRateConfig.Downmix71
         PassthroughTag = $null
-        Rule = "PCMFLAC_7.1_to_Stereo"
+        Rule = "PCMFLAC_7.1_to_Stereo_$($StereoBitRateConfig.Downmix71)"
         Priority = 62
     },
     [PSCustomObject]@{
@@ -279,9 +289,9 @@ $Rules_PCMFLAC = @(
         Channels = 6
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "768k"
+        Bitrate = $StereoBitRateConfig.Encode51
         PassthroughTag = $null
-        Rule = "PCMFLAC_5.1_to_Stereo"
+        Rule = "PCMFLAC_5.1_to_Stereo_$($StereoBitRateConfig.Encode51)"
         Priority = 61
     },
     [PSCustomObject]@{
@@ -289,9 +299,9 @@ $Rules_PCMFLAC = @(
         Channels = 2
         ProfileRegex = $null
         Action = "Encode"
-        Bitrate = "384k"
+        Bitrate = $StereoBitRateConfig.Encode20
         PassthroughTag = $null
-        Rule = "PCMFLAC_2.0_to_Stereo"
+        Rule = "PCMFLAC_2.0_to_Stereo_$($StereoBitRateConfig.Encode20)"
         Priority = 60
     }
 )
@@ -687,9 +697,9 @@ function Convert-AudioTracks {
             if (-not $Rule) { $Rule = $match.Rule }
         }
         else {
-            if ($Channels -le 2)      { $Action="Encode";  $Rule="Fallback_2.0_to_Stereo" }
-            elseif ($Channels -gt 6)  { $Action="Downmix"; $Rule="Fallback_7.1_to_Stereo" }
-            else                      { $Action="Encode";  $Rule="Fallback_5.1_to_Stereo" }
+            if ($Channels -le 2)      { $Action="Encode";  $Rule="Fallback_2.0_to_Stereo_$($StereoBitRateConfig.Encode20)" }
+            elseif ($Channels -gt 6)  { $Action="Downmix"; $Rule="Fallback_7.1_to_Stereo_$($StereoBitRateConfig.Downmix71)" }
+            else                      { $Action="Encode";  $Rule="Fallback_5.1_to_Stereo_$($StereoBitRateConfig.Encode51)" }
             $Passthrough=$false; $Tag=$null; $Priority=0
         }
 
@@ -883,13 +893,15 @@ function Build-FFmpegCommand {
         [string]    $InputFile,
         [int]       $ThreadCount,
         [string]    $StereoCodec,
-        [hashtable] $StereoBitrates,
+        [hashtable] $StereoBitRateConfig,
         [bool]      $FoldLFE
     )
 
-    $TargetBitrate = $StereoBitrates[$StereoCodec]
+    # Output is always 2.0 stereo — all $StereoBitRateConfig keys resolve to the
+    # same value, but Encode20 is semantically correct for the final output.
+    $TargetBitrate = $StereoBitRateConfig.Encode20
     if ([string]::IsNullOrWhiteSpace($TargetBitrate)) {
-        throw "StereoBitrates hashtable does not contain a valid entry for codec '$StereoCodec'. Check global settings."
+        throw "StereoBitRateConfig does not contain a valid Encode20 entry. Check global settings."
     }
 
     $ffArgs   = [System.Collections.Generic.List[string]]::new()
@@ -911,12 +923,12 @@ function Build-FFmpegCommand {
     $pan51 = "pan=stereo|FL=FL+0.707*FC+0.707*BL+0.707*SL+0.5*BC${lfeTerm}|FR=FR+0.707*FC+0.707*BR+0.707*SR+0.5*BC${lfeTerm}"
     $pan71 = "aformat=channel_layouts=7.1,pan=stereo|FL=FL+0.707*FC+0.707*BL+0.5*SL${lfeTerm}|FR=FR+0.707*FC+0.707*BR+0.5*SR${lfeTerm}"
 
-    $alimiter = "alimiter=limit=0.948:attack=5:release=50:level=disabled"
+    $alimiter = "alimiter=limit=0.948:attack=5:release=50:level=disabled:latency=1"
 
     # Global FFmpeg options. Input options before -i, output options after.
     $ffArgs.AddRange([string[]](
         "-y",
-        "-loglevel",             "warning",
+        "-loglevel",             "error",   #changed from warning
         "-stats",
         "-threads",              $ThreadCount,
         "-analyzeduration",      "200M",
@@ -1041,8 +1053,8 @@ function Build-FFmpegCommand {
 # ==================
 #  MAIN EXECUTION
 # ==================
-Write-Host "=== ConvertAudioEngine-Stereo v1.3.2 ===" -ForegroundColor Cyan
-Write-Host "Stereo codec: $StereoCodec @ $($StereoBitrates[$StereoCodec]) | LFE fold: $FoldLFE" -ForegroundColor Cyan
+Write-Host "=== ConvertAudioEngine-Stereo v1.4.0 ===" -ForegroundColor Cyan
+Write-Host "Stereo codec: $StereoCodec @ $($StereoBitRateConfig.Encode20) | LFE fold: $FoldLFE" -ForegroundColor Cyan
 Write-Host ""
 
 Write-Host "=== Probing Audio Streams ===" -ForegroundColor Cyan
@@ -1066,7 +1078,7 @@ if ($survivors.Count -eq 0) {
 Write-Host ""
 Write-Host "=== Building FFmpeg Command ===" -ForegroundColor Cyan
 $cmd = Build-FFmpegCommand -Tracks $tracks -InputFile $InputFile -ThreadCount $ThreadCount `
-                            -StereoCodec $StereoCodec -StereoBitrates $StereoBitrates `
+                            -StereoCodec $StereoCodec -StereoBitRateConfig $StereoBitRateConfig `
                             -FoldLFE $FoldLFE
 
 $timer = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1094,7 +1106,7 @@ Write-Host "=== AUDIO PROCESSING SUMMARY ===" -ForegroundColor Cyan
 Write-Host ""
 
 # Header
-$header = "{0,-4} {1,-8} {2,-5} {3,-18} {4,-44} {5,-5} {6}" -f `
+$header = "{0,-4} {1,-8} {2,-5} {3,-26} {4,-44} {5,-5} {6}" -f `
     "Idx","Codec","Ch","Action","Output","Pri","Rule"
 
 Write-Host $header -ForegroundColor White
@@ -1118,17 +1130,17 @@ foreach ($t in $tracks) {
     } elseif ($t.Output -match "Passthrough") {
         "Passthrough"
     } elseif ($t.Output -match "Downmix 7\.1") {
-        "Downmix 7.1->2.0"
+        "Downmix 7.1->2.0 ($($StereoBitRateConfig.Downmix71))"
     } elseif ($t.Output -match "Downmix 5\.1") {
-        "Downmix 5.1->2.0"
+        "Downmix 5.1->2.0 ($($StereoBitRateConfig.Encode51))"
     } else {
-        "Encode Stereo"
+        "Encode Stereo ($($StereoBitRateConfig.Encode20))"
     }
 
     $OutputLabel = $t.Output ? $t.Output : "(none)"
     $PriLabel    = $t.Action -eq "Removed" ? "-" : $t.Priority
 
-    $line = "{0,-4} {1,-8} {2,-5} {3,-18} {4,-44} {5,-5} {6}" -f `
+    $line = "{0,-4} {1,-8} {2,-5} {3,-26} {4,-44} {5,-5} {6}" -f `
         $t.Index, $t.Codec, $t.Channels, $ActionLabel, $OutputLabel, $PriLabel, $t.Rule
 
     Write-Host $line -ForegroundColor $Color

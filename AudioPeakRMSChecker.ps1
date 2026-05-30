@@ -1,13 +1,15 @@
 # ============================================================
-# Script: AudioPeakRMSChecker.ps1  -  (Version 4.21)
+# Script: AudioPeakRMSChecker.ps1  -  (Version 4.2.6)
 #
-# Overview: 
-# Probes all audio streams in an MKV file using ffprobe, then runs
-# FFmpeg astats analysis on supported tracks (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0).
-# Reports: Peak level dB, RMS level dB, Crest factor and Peak count
+# Probes all audio streams in an MKV file using ffprobe.
+# FFmpeg astats analysis on supported tracks:
+# (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0).
+# Reports: Peak level dB, RMS level dB, Crest factor and Peak count:
 # per track with PASS/FAIL evaluation.
+#
 # Saves a full astats log file per track for further inspection.
-# Supports single-track and multi-track analysis modes (7.1 source, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0, or combinations).
+# Supports single-track and multi-track analysis modes:
+# (7.1 source, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0, or combinations)
 #
 # Usage (Windows):     pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
 # Usage (macOS/Linux): pwsh -File ./AudioPeakRMSChecker.ps1 "./YourMovie.mkv"
@@ -365,6 +367,61 @@ function Format-Metrics {
     return $lines
 }
 
+# --- A/V Sync helpers ---
+
+function Get-VideoStartTime {
+    param([string]$FilePath)
+    $raw = & $script:ffprobe -v error -select_streams v:0 `
+        -show_entries stream=start_time `
+        -of csv=p=0 "$FilePath" 2>$null
+    # No output → no video stream in file.
+    if (-not $raw) { return $null }
+    $first = ($raw | Select-Object -First 1).Trim()
+    # N/A or empty → stream exists but timing unavailable; return NaN so the
+    # caller can distinguish this from a genuine 0.0 start offset.
+    if ($first -eq '' -or $first -eq 'N/A') { return [double]::NaN }
+    $val = 0.0
+    if ([double]::TryParse($first, [NumberStyles]::Float, [CultureInfo]::InvariantCulture, [ref]$val)) {
+        return $val
+    }
+    # Parse failed but stream exists → timing unavailable.
+    return [double]::NaN
+}
+
+function Get-AVSyncStatus {
+    param(
+        [double]$VideoStartTime,
+        [PSCustomObject]$AudioStream,
+        [double]$TrueHDPrerollMaxMs = 120.0,
+        [double]$GeneralToleranceMs = 5.0
+    )
+    $audioStartMs = $AudioStream.StartTime * 1000.0
+    $videoStartMs = $VideoStartTime         * 1000.0
+    $offsetMs     = [Math]::Round($audioStartMs - $videoStartMs, 1)
+    $codec        = $AudioStream.Codec
+
+    if ($codec -eq 'truehd') {
+        # Audio starting up to 120 ms before video is normal TrueHD preroll.
+        # A small positive offset (≤ 5 ms) covers container rounding.
+        if ($offsetMs -ge -$TrueHDPrerollMaxMs -and $offsetMs -le $GeneralToleranceMs) {
+            return [PSCustomObject]@{ Status = 'OK'; Message = 'A/V Sync : OK'; OffsetMs = $offsetMs }
+        }
+    } else {
+        if ([Math]::Abs($offsetMs) -le $GeneralToleranceMs) {
+            return [PSCustomObject]@{ Status = 'OK'; Message = 'A/V Sync : OK'; OffsetMs = $offsetMs }
+        }
+    }
+
+    $sign = if ($offsetMs -gt 0) { '+' } else { '' }
+    $dir  = if ($offsetMs -gt 0) { 'after' } else { 'before' }
+    $abs  = [Math]::Abs($offsetMs)
+    return [PSCustomObject]@{
+        Status   = 'WARNING'
+        Message  = "A/V Sync : WARNING — audio starts $sign$([int]$abs) ms $dir video"
+        OffsetMs = $offsetMs
+    }
+}
+
 # --- Validate environment ---
 
 foreach ($bin in $ffprobe, $ffmpeg) {
@@ -410,6 +467,13 @@ $probe = & $ffprobe -v error -select_streams a `
 if (-not $probe) {
     Write-Err "No audio streams found."
     exit 1
+}
+
+# Probe video stream start_time for A/V sync evaluation.
+# v4.2.6: silent when timing data is unavailable; only emits info line when a real value is available.
+$videoStartTime = Get-VideoStartTime $InputFile
+if ($null -ne $videoStartTime -and -not [double]::IsNaN($videoStartTime)) {
+    Write-Info ("Video start_time: {0} ms" -f [int][Math]::Round($videoStartTime * 1000))
 }
 
 $audioStreams = $probe | ForEach-Object {
@@ -491,6 +555,15 @@ $srcLabel = if ($source) {
 }
 
 $results = [List[object]]::new()
+
+# Evaluate A/V sync using the primary source track (7.1 preferred; falls back to first audio stream).
+$avSync = $null
+if ($null -ne $videoStartTime -and -not [double]::IsNaN($videoStartTime)) {
+    $syncStream = if ($source) { $source } else { $audioStreams | Select-Object -First 1 }
+    if ($syncStream) {
+        $avSync = Get-AVSyncStatus $videoStartTime $syncStream
+    }
+}
 
 # --- Build analyzable track list ---
 # Each entry carries: the underlying stream object, the user-facing Label,
@@ -617,6 +690,15 @@ foreach ($r in $results) {
     }
 }
 
+# Add A/V sync result to schema when available.
+if ($avSync) {
+    $schema | Add-Member -MemberType NoteProperty -Name av_sync -Value ([PSCustomObject]@{
+        status    = $avSync.Status
+        offset_ms = $avSync.OffsetMs
+        message   = $avSync.Message
+    }) -Force
+}
+
 # If JSON mode is enabled, output JSON and exit
 if ($JsonMode) {
     $schema | ConvertTo-Json -Depth 10
@@ -671,6 +753,18 @@ if ($results.Count -eq 2) {
         Write-Host ("Downmix Crest: {0} dB" -f $dm.Crest)
         Write-Host ""
     }
+}
+
+if ($avSync) {
+    Write-Host "=== A/V SYNC CHECK ===" -ForegroundColor Yellow
+    $syncColor = if ($avSync.Status -eq 'OK') { 'Green' } else { 'Red' }
+    Write-Host $avSync.Message -ForegroundColor $syncColor
+    if ($avSync.Status -eq 'OK') {
+        Write-Host "  → Safe to proceed with ConvertAudioEngine-DDP51 or ConvertAudioEngine-Keep71." -ForegroundColor Green
+    } else {
+        Write-Host "  → Do NOT run ConvertAudioEngine-DDP51 or ConvertAudioEngine-Keep71 until this sync issue is fixed." -ForegroundColor Red
+    }
+    Write-Host ""
 }
 
 Write-Host "=== End of Summary ===" -ForegroundColor Yellow

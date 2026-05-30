@@ -1,5 +1,5 @@
 # ============================================================
-# Script     : AudioRemove-AC3.ps1 — (Version 3.5)
+# Script     : AudioRemove-AC3.ps1 — (Version 3.7)
 # Overview   : Pure remux (no re-encode).
 #
 # Purpose    : Remove all AC3 and E-AC3 audio streams (typically low-bitrate).
@@ -39,6 +39,19 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # ==============================
+# ENGINE: Banner + Stopwatch
+# ==============================
+$banner = @"
+
+────────────────────────────────────────────────────────────
+ AudioRemove-AC3 v3.7
+ Pure remux: strips AC3/E-AC3 audio via FFmpeg
+────────────────────────────────────────────────────────────
+"@
+Write-Host $banner -ForegroundColor Cyan
+$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+# ==============================
 # ENGINE: ffmpeg/ffprobe setup
 # ==============================
 $ext     = $IsWindows ? '.exe' : ''
@@ -63,6 +76,7 @@ if (-not (Test-Path -LiteralPath $InputFile)) {
 # ----------------------
 
 $fullInput = [System.IO.Path]::GetFullPath($InputFile)
+Write-Host "Input: $fullInput" -ForegroundColor DarkGray
 
 $outDir  = [System.IO.Path]::GetDirectoryName($fullInput)
 $base    = [System.IO.Path]::GetFileNameWithoutExtension($fullInput)
@@ -90,6 +104,8 @@ function Get-StreamInfo {
 
     $probeArgs = @(
         '-v',            'error'
+        '-probesize',       '200M'
+        '-analyzeduration', '200M'
         '-show_entries', 'stream=index,codec_type,codec_name:stream_tags=language,title'
         '-of',           'json'
         $File
@@ -108,6 +124,40 @@ function Get-StreamInfo {
     }
 
     return $streams
+}
+
+# =========================================
+# ENGINE: Duration probe (for progress bar)
+# =========================================
+# Returns total container duration in seconds (double), or 0 if unavailable.
+# Drives the duration-based percent in the progress bar. A 0 result triggers
+# the indeterminate fallback (media-time readout instead of a percent bar).
+function Get-DurationSeconds {
+    param(
+        [string]$File,
+        [string]$ffprobePath
+    )
+
+    $durArgs = @(
+        '-v',            'error'
+        '-show_entries', 'format=duration'
+        '-of',           'default=noprint_wrappers=1:nokey=1'
+        $File
+    )
+
+    $raw = & $ffprobePath @durArgs
+
+    if ($LASTEXITCODE -ne 0) { return [double]0 }
+
+    $val = [double]0
+    if ([double]::TryParse(
+            ("$raw").Trim(),
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$val)) {
+        return $val
+    }
+    return [double]0
 }
 
 $streams = Get-StreamInfo -File $fullInput -ffprobePath $ffprobe
@@ -131,6 +181,27 @@ function Get-PropSafe {
     $p = $Obj.PSObject.Properties[$Prop]
     if ($null -eq $p)                   { return $null }
     return $p.Value
+}
+
+# -----------------------
+# Single Line Progress bar
+# -----------------------
+function Show-ProgressBar {
+    param(
+        [int]$Percent,
+        [int]$Width = 40
+    )
+    $Percent = [Math]::Max(0, [Math]::Min(100, $Percent))
+    $filled  = [Math]::Floor($Width * $Percent / 100)
+    $empty   = $Width - $filled
+    $bar     = ('█' * $filled) + ('░' * $empty)
+
+    if ($Percent -eq 100) {
+        Write-Host -NoNewline ("`r  [{0}] {1,3}%" -f $bar, $Percent) -ForegroundColor Green
+    }
+    else {
+        Write-Host -NoNewline ("`r  [{0}] {1,3}%" -f $bar, $Percent) -ForegroundColor Blue
+    }
 }
 
 # -------------------------------------------
@@ -179,11 +250,13 @@ $keepAudio   = @($AudioTracks | Where-Object { -not $_.IsAC3 })
 $dropAudio   = @($AudioTracks | Where-Object { $_.IsAC3 })
 
 if ($dropAudio.Count -eq 0) {
+    $stopwatch.Stop()
     Write-Host "No AC3/E-AC3 audio streams found -- nothing to remove. Exiting."
     exit 0
 }
 
 if ($keepAudio.Count -eq 0) {
+    $stopwatch.Stop()
     Write-Warning "All audio tracks are AC3/E-AC3 -- nothing to keep. Exiting."
     exit 2   # exit 2 = aborted (destructive action prevented); exit 0 = no AC3 found (clean no-op)
 }
@@ -249,14 +322,14 @@ function New-MapArgs {
 #
 # This helper produces one instruction per kept audio stream — no overlaps.
 #   a:0  >> default   (first kept audio is the default playback track)
-#   a:1+ >> none      (all other kept audio tracks get no track flags)
+#   a:1+ >> 0         (clears disposition flags; '0' is the documented clear value)
 function New-AudioDispositionArgs {
     param([int]$Count)
 
     $dispArgs = [System.Collections.Generic.List[string]]::new()
     for ($j = 0; $j -lt $Count; $j++) {
         $dispArgs.Add("-disposition:a:$j")
-        $dispArgs.Add(($j -eq 0) ? 'default' : 'none')
+        $dispArgs.Add(($j -eq 0) ? 'default' : '0')
     }
     return $dispArgs.ToArray()
 }
@@ -292,21 +365,28 @@ if ($AttachTracks.Count -gt 0) {
 #
 #    -n : don't overwrite the output file if it already exists.
 #
+#    -progress pipe:1 : emit machine-readable progress blocks to stdout
+#                       (parsed for out_time → percent). Pairs with -nostats
+#                       so the human-oriented stats line is suppressed.
+#
 #    0:V? : maps all video streams except attached pictures.
 #           Safe for audio-only MKVs. Use 0:v? if you also want
 #           to keep cover art stored as an ATTACHED_PIC video stream.
 $ffArgs = @(
     '-n'
     '-hide_banner'
-    '-loglevel',         'warning'
-    '-stats'
+    '-nostdin'                              # don't consume console stdin while we read stdout
+    '-loglevel',         'error'
+    '-nostats'                              # suppress default stats; we render our own bar
+    '-progress',         'pipe:1'           # machine-readable progress → stdout
+    '-stats_period',     '0.2'              # progress update cadence (default 0.5s) → smoother bar
     '-probesize',        '200M'
     '-analyzeduration',  '200M'
-    '-fflags',           '+discardcorrupt'   # discard corrupt packets instead of aborting
+    '-fflags',           '+discardcorrupt'  # discard corrupt packets instead of aborting
     '-i',                $fullInput
-    '-avoid_negative_ts','make_zero'         # clamp negative PTS from source container
-    '-map_metadata',     '0'                 # directly carry over container metadata
-    '-map_chapters',     '0'                 # directly carry over chapters
+    '-avoid_negative_ts','make_zero'        # clamp negative PTS from source container
+    '-map_metadata',     '0'                # directly carry over container metadata
+    '-map_chapters',     '0'                # directly carry over chapters
     '-map',              '0:V?'
 )
 
@@ -326,23 +406,94 @@ $ffArgs += @(for ($j = 0; $j -lt $keepAudio.Count; $j++) {
 })
 
 $ffArgs += @(
-    '-max_muxing_queue_size',  '14000'       # prevents video flooding mux queue on long files
-    '-c',                      'copy'        # remux - no re-encode
+    '-max_muxing_queue_size',  '14000'      # prevents video flooding mux queue on long files
+    '-c',                      'copy'       # remux - no re-encode
     $OutputFile
 )
 
 # ======================
 # ENGINE: Execute FFmpeg
 # ======================
+# System.Diagnostics.Process is used (not the & operator) because:
+#   1. RedirectStandardOutput lets us read -progress blocks line by line
+#   2. RedirectStandardError captures real errors without polluting stdout
+#   3. stderr is drained asynchronously to avoid buffer-fill deadlock
 $displayArgs = $ffArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
 Write-Verbose "FFmpeg command (reference): ffmpeg $($displayArgs -join ' ')"
 
-$inputBytes = (Get-Item -LiteralPath $fullInput).Length
+$durationSec = Get-DurationSeconds -File $fullInput -ffprobePath $ffprobe
+$inputBytes  = (Get-Item -LiteralPath $fullInput).Length
 
-& $ffmpeg @ffArgs
+$psi = [System.Diagnostics.ProcessStartInfo]::new()
+$psi.FileName               = $ffmpeg
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError  = $true
+$psi.UseShellExecute        = $false
+$psi.CreateNoWindow         = $true
+$psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+$psi.StandardErrorEncoding  = [System.Text.Encoding]::UTF8
+foreach ($a in $ffArgs) { $psi.ArgumentList.Add($a) }
 
-if ($LASTEXITCODE -ne 0) {
-    throw "FFmpeg exited with code $LASTEXITCODE."
+$proc = [System.Diagnostics.Process]::new()
+$proc.StartInfo = $psi
+[void]$proc.Start()
+
+# Drain stderr asynchronously (Task<string>) to prevent deadlock if the
+# stderr buffer fills while we read the stdout progress stream.
+$stderrTask = $proc.StandardError.ReadToEndAsync()
+
+Write-Host ""
+Write-Host "Remuxing..." -ForegroundColor White
+
+$lastPct = -1
+$hasDur  = $durationSec -gt 0
+
+# FFmpeg -progress emits repeating key=value blocks. The fields we care about:
+#   out_time_us=<microseconds>   (preferred; FFmpeg 8.1)
+#   out_time_ms=<microseconds>   (legacy alias, also microseconds despite the name)
+#   progress=continue | end
+while (-not $proc.StandardOutput.EndOfStream) {
+    $line = $proc.StandardOutput.ReadLine()
+    if ($null -eq $line) { continue }
+
+    if ($hasDur -and ($line -match '^out_time_us=(\d+)' -or $line -match '^out_time_ms=(\d+)')) {
+        $us  = [double]$Matches[1]
+        $pct = [int][Math]::Floor(($us / 1e6) / $durationSec * 100)
+        if ($pct -ne $lastPct) {
+            Show-ProgressBar -Percent $pct
+            $lastPct = $pct
+        }
+    }
+    elseif (-not $hasDur -and $line -match '^out_time=(\d{2}:\d{2}:\d{2})') {
+        # Indeterminate fallback: no duration → show media-time readout instead of %.
+        Write-Host -NoNewline ("`r  Processing... {0}" -f $Matches[1]) -ForegroundColor Blue
+    }
+
+    if ($line -match '^progress=end') {
+        if ($hasDur) { Show-ProgressBar -Percent 100 }
+    }
+}
+
+$proc.WaitForExit()
+$exitCode   = $proc.ExitCode
+$stderrText = ($stderrTask.Result ?? '').Trim()
+Write-Host ""  # newline after progress bar
+
+$stopwatch.Stop()
+$elapsed    = $stopwatch.Elapsed
+$elapsedStr = "{0:D2}:{1:D2}:{2:D2}" -f $elapsed.Hours, $elapsed.Minutes, $elapsed.Seconds
+
+if ($exitCode -ne 0) {
+    if (Test-Path -LiteralPath $OutputFile) {
+        # Remove partial output on error
+        Remove-Item -LiteralPath $OutputFile -Force -ErrorAction SilentlyContinue
+    }
+    throw "FFmpeg exited with code $exitCode.`n$stderrText"
+}
+
+if ($stderrText) {
+    Write-Warning "FFmpeg emitted messages on stderr:"
+    Write-Host $stderrText -ForegroundColor DarkYellow
 }
 
 $outputBytes = (Get-Item -LiteralPath $OutputFile).Length
@@ -351,6 +502,7 @@ Write-Host "`nDone. Output: $OutputFile" -ForegroundColor Green
 $absMiB      = [Math]::Abs($savedMiB)
 $savedLabel  = $savedMiB -ge 0 ? "saved $("{0:N0}" -f $absMiB) MiB" : "overhead +$("{0:N0}" -f $absMiB) MiB"
 Write-Host ("Size : {0:N0} MiB → {1:N0} MiB  ($savedLabel)" -f ($inputBytes/1MB), ($outputBytes/1MB)) -ForegroundColor DarkCyan
+Write-Host ("Time : $elapsedStr") -ForegroundColor DarkCyan
 
 # ======================
 # ENGINE: Summary Engine
