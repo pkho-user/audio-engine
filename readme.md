@@ -118,27 +118,6 @@ It delivers solid surround quality without huge file sizes, making it a reliable
 
 ---
 
-## How It Decides What to Do
-
-| Original Format | Channels | Action | Output |
-|-----------------|----------|--------|--------|
-| EAC3 Atmos (JOC) | Any | Passthrough | Unchanged |
-| EAC3 | 5.1 | Passthrough | Unchanged |
-| EAC3 | 2.0 | Passthrough | Unchanged |
-| TrueHD | 5.1 | Passthrough | Unchanged |
-| TrueHD | 7.1 | Downmix | EAC3 5.1 @ 1024k |
-| DTS-HD MA / DTS-HRA | >2 | Encode | EAC3 5.1 @ 1024k |
-| DTS Core | >2 | Encode | EAC3 5.1 @ 768k |
-| AAC / PCM / FLAC | 7.1 | Downmix | EAC3 5.1 @ 1024k |
-| AAC / PCM / FLAC | 5.1 | Encode | EAC3 5.1 @ 768k |
-| AAC | 2.0 | Encode | EAC3 2.0 @ 256k |
-| PCM / FLAC | 2.0 | Encode | EAC3 2.0 @ 384k |
-| Stereo + commentary title | 2.0 | Remove | — |
-
-If something doesn't match any rule, it falls back to sensible defaults.
-
----
-
 ## Customization
 
 You can tweak these settings directly in the script:
