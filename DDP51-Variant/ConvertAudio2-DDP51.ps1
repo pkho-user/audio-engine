@@ -1,6 +1,7 @@
 # ========================================================================
 #  ConvertAudio2-DDP51 v1.0.5 — Production Use
 #  PowerShell 7.6, FFmpeg 8.1
+#  Review the Documentation-Audio2-DDP51.pdf
 #
 #  Foundation: ConvertAudioEngine-DDP51 (3-phase A/B/C SPN architecture)
 #  Includes Safe Peak Normalizer (SPN) and malformed-layout guards.
