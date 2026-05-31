@@ -43,7 +43,7 @@ Designed for home theater users who want clean, consistent audio without writing
 pwsh -ExecutionPolicy Bypass -File .\ConvertAudioEngine-DDP51.ps1 ".\YourMovie.mkv"
 ```
 
-> Replace the script name with any other script — the invocation pattern is the same for all.
+> Replace the script name with any other script — the usage is the same for all of them.  
 > The **-ExecutionPolicy Bypass** flag only applies to this single run and does not change your system settings.
 
 ### macOS / Linux
