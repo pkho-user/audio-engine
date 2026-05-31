@@ -458,8 +458,8 @@ function Get-AudioStreams {
     param([string]$File)
 
     $probeArgs = @(
-        "-analyzeduration","150M",
-        "-probesize","150M",
+        "-analyzeduration","200M",
+        "-probesize","200M",
         "-v","quiet","-print_format","json",
         "-show_streams","-select_streams","a",$File
     )
