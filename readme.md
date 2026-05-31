@@ -34,8 +34,6 @@ Designed for home theater users who want clean, consistent audio without writing
 | **AudioRemove-AC3-mkvmerge.ps1** | Removes low bit-rate AC3/E-AC3 streams using **mkvmerge** (MKVToolNix 98.0+) |
 | **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
 
-### Quick Start
-
 ### Windows11
 
 1. Place the script, **`ffmpeg.exe`**, and **`ffprobe.exe`** in the same folder.
@@ -67,7 +65,7 @@ pwsh -File ./ConvertAudioEngine-DDP51.ps1 "./YourMovie.mkv"
 
 ### Why HandBrake Falls Short for UHD Audio Workflows
 
-HandBrake's audio pipeline is extremely basic:
+**HandBrake's audio pipeline is extremely basic:**
 - no video passthrough (always re‑encodes video)  
 - no ITU‑R BS.775 downmix matrix — defaults to Dolby ProLogic II  
 - no correct 7.1 layout pinning (`aformat=channel_layouts=7.1`)  
@@ -76,7 +74,7 @@ HandBrake's audio pipeline is extremely basic:
 - no loudness logic  
 - no codec‑aware rules for TrueHD / EAC3 / DTS‑HD  
 
-All DDP5.1 and KEEP7.1 scripts form a complete audio‑engineering pipeline:
+**All DDP5.1 and KEEP7.1 scripts form a complete audio‑engineering pipeline:**
 - video stream copy (bit‑perfect UHD preservation)  
 - correct 7.1 layout pinning (`aformat=channel_layouts=7.1`)  
 - ITU‑R BS.775 downmix matrix  
