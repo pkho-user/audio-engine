@@ -61,7 +61,7 @@ chmod +x ffmpeg ffprobe
 pwsh -File ./ConvertAudioEngine-DDP51.ps1 "./YourMovie.mkv"
 ```
 
-> Replace the script name with any other script — the invocation pattern is the same for all.
+> Replace the script name with any other script — the usage is the same for all of them.
 
 ### Why HandBrake Falls Short for UHD Audio Workflows
 
