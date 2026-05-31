@@ -26,10 +26,10 @@ Designed for home theater users who want clean, consistent audio without writing
 
 | Script | Purpose |
 |--------|---------|
-| **ConvertAudioEngine-DDP51.ps1** | Converts all audio to DDP 5.1, passthrough, downmix, or re-encode depending on source |
+| **ConvertAudioEngine-DDP51.ps1** | Converts all audio to DDP 5.1, using passthrough, downmix, or re‑encode depending on the source |
 | **ConvertAudioEngine-Keep71.ps1** | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
-| **ConvertAudio2-DDP51.ps1** | Single track DDP 5.1 output, selects the best audio per language, removes 2.0 tracks, downmixes 7.1/Atmos, re-encodes or passes through 5.1 |
-| **ConvertAudio2-Stereo.ps1** | Converts any 7.1, Atmos, 5.1, or 2.0 track to a high quality EAC3 or Opus stereo file, downmix or re-encode depending on source |
+| **ConvertAudio2-DDP51.ps1** | Single track DDP 5.1 output, selecting the best audio per language, removing 2.0 tracks, downmixing 7.1/Atmos, and re‑encoding or passing through 5.1 |
+| **ConvertAudio2-Stereo.ps1** | Converts any 7.1, Atmos, 5.1, or 2.0 track to a high quality EAC3 or Opus stereo file, downmixing or re‑encoding depending on the source |
 | **AudioRemove-AC3.ps1** | Removes low bit-rate AC3/E-AC3 streams to produce a lean master before conversion |
 | **AudioRemove-AC3-mkvmerge.ps1** | Removes low bit-rate AC3/E-AC3 streams using **mkvmerge** (MKVToolNix 98.0+) |
 | **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
