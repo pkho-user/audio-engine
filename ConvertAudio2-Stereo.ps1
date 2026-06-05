@@ -923,7 +923,7 @@ function Build-FFmpegCommand {
     $pan51 = "pan=stereo|FL=FL+0.707*FC+0.707*BL+0.707*SL+0.5*BC${lfeTerm}|FR=FR+0.707*FC+0.707*BR+0.707*SR+0.5*BC${lfeTerm}"
     $pan71 = "aformat=channel_layouts=7.1,pan=stereo|FL=FL+0.707*FC+0.707*BL+0.5*SL${lfeTerm}|FR=FR+0.707*FC+0.707*BR+0.5*SR${lfeTerm}"
 
-    $alimiter = "alimiter=limit=0.948:attack=5:release=50:level=disabled:latency=1"
+    $alimiter = "alimiter=limit=0.948:attack=5:release=50:level=false:latency=1"
 
     # Global FFmpeg options. Input options before -i, output options after.
     $ffArgs.AddRange([string[]](
