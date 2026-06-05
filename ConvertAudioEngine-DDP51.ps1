@@ -739,7 +739,7 @@ function Build-FFmpegCommand {
             # Side (SL/SR) are folded into the rear (BL/BR) with -3 dB attenuation
             # alimiter catches post-pan peaks exceeding -0.47 dBFS (attack=5ms, release=50ms)
             $pre       = $t.NeedsNormalization ? "$loudnorm," : ""
-            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled:latency=1"
+            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=false:latency=1"
 
             $ffArgs.AddRange([string[]](
                 "-filter:a:$i",     $panFilter,
