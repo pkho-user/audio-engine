@@ -697,7 +697,7 @@ function Build-FFmpegCommand {
             # (4) see header note
             # alimiter catches post-pan peaks exceeding -0.47 dBFS (attack=5ms, release=50ms)
             $pre71 = $t.NeedsNormalization ? "$loudnorm," : ""
-            $panFilter71 = "${pre71}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled:latency=1"
+            $panFilter71 = "${pre71}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=false:latency=1"
             $ffArgs.AddRange([string[]](
                 "-map","0:$($t.RealIndex)",
                 "-filter:a:$i", $panFilter71,
@@ -722,7 +722,7 @@ function Build-FFmpegCommand {
             # channels (BL/BR) with -3 dB attenuation to preserve spatial balance.
             # Dolby DRC is disabled, and the final output is encoded as DD+ 5.1.
             $pre = $t.NeedsNormalization ? "$loudnorm," : ""
-            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=disabled:latency=1"
+            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=false:latency=1"
 
             $ffArgs.AddRange([string[]](
                 "-filter:a:$i", $panFilter,
