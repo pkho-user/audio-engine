@@ -2,6 +2,7 @@
 #  ConvertAudio2-DDP51 v1.0.7 — Production Use
 #  PowerShell 7.6, FFmpeg 8.1
 #
+#  Removes low-bitrate audio and downmixes the remaining high-quality audio track.
 #  Foundation: ConvertAudioEngine-DDP51 (3-phase A/B/C SPN architecture)
 #  Includes Safe Peak Normalizer (SPN) and malformed-layout guards.
 #
