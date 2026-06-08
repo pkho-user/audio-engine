@@ -1,15 +1,15 @@
 # ============================================================
-# Script: AudioPeakRMSChecker.ps1  -  (Version 4.2.6)
+# Script: AudioPeakRMSChecker.ps1  -  (Version 4.2.7)
 #
 # Probes all audio streams in an MKV file using ffprobe.
 # FFmpeg astats analysis on supported tracks:
-# (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0).
+# (TrueHD 7.1, AAC 7.1, DTS-HD 7.1, DTS-HD MA 5.1, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0).
 # Reports: Peak level dB, RMS level dB, Crest factor and Peak count:
 # per track with PASS/FAIL evaluation.
 #
 # Saves a full astats log file per track for further inspection.
 # Supports single-track and multi-track analysis modes:
-# (7.1 source, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0, or combinations)
+# (7.1 source, DTS-HD MA 5.1, DDP 5.1, AAC 5.1, AAC 2.0, Opus 2.0, DDP 2.0, or combinations)
 #
 # Usage (Windows):     pwsh -ExecutionPolicy Bypass -File .\AudioPeakRMSChecker.ps1 ".\YourMovie.mkv"
 # Usage (macOS/Linux): pwsh -File ./AudioPeakRMSChecker.ps1 "./YourMovie.mkv"
@@ -541,6 +541,7 @@ foreach ($s in $supported) {
 $source  = $supported | Where-Object { $_.Codec -in @("truehd","aac","dts") -and $_.Channels -eq 8 } | Select-Object -First 1
 $downmix = $supported | Where-Object { $_.Codec -eq "eac3" -and $_.Channels -eq 6 } | Select-Object -First 1
 $aac51   = $supported | Where-Object { $_.Codec -eq "aac"  -and $_.Channels -eq 6 } | Select-Object -First 1
+$dts51   = $supported | Where-Object { $_.Codec -eq "dts"  -and $_.Channels -eq 6 } | Select-Object -First 1
 $opus20  = $supported | Where-Object { $_.Codec -eq "opus" -and $_.Channels -eq 2 } | Select-Object -First 1
 $eac320  = $supported | Where-Object { $_.Codec -eq "eac3" -and $_.Channels -eq 2 } | Select-Object -First 1
 $aac20   = $supported | Where-Object { $_.Codec -eq "aac"  -and $_.Channels -eq 2 } | Select-Object -First 1
@@ -596,6 +597,16 @@ if ($aac51 -and -not ($source -and $downmix)) {
         Label    = 'AAC 5.1'
         Suffix   = 'aac51'
         ModeName = 'AAC 5.1'
+    })
+}
+# DTS-HD MA 5.1 is a primary lossless track (not a downmix), so it is always
+# analyzed when present, independent of the source/downmix suppression rule above.
+if ($dts51) {
+    $analyzable.Add([PSCustomObject]@{
+        Stream   = $dts51
+        Label    = 'DTS-HD MA 5.1'
+        Suffix   = 'dts51'
+        ModeName = 'DTS-HD MA 5.1'
     })
 }
 # Stereo tracks (Opus 2.0, DDP 2.0) typically serve a distinct role from the 5.1
@@ -665,6 +676,7 @@ foreach ($r in $results) {
     $role = if ($r.Label -like "Source*") { "source" }
             elseif ($r.Label -like "Downmix*") { "downmix" }
             elseif ($r.Label -eq "AAC 5.1") { "aac51" }
+            elseif ($r.Label -eq "DTS-HD MA 5.1") { "dts51" }
             elseif ($r.Label -eq "Opus 2.0") { "opus20" }
             elseif ($r.Label -eq "Dolby Digital Plus 2.0") { "eac320" }
             elseif ($r.Label -eq "AAC 2.0") { "aac20" }
