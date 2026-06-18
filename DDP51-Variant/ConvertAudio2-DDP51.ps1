@@ -1,5 +1,5 @@
 # ========================================================================
-#  ConvertAudio2-DDP51 v1.0.7 — Production Use
+#  ConvertAudio2-DDP51 v1.0.8 — Production Use
 #  PowerShell 7.6, FFmpeg 8.1
 #
 #  Removes low-bitrate audio and downmixes the remaining high-quality audio track.
@@ -654,12 +654,17 @@ function Convert-AudioTracks {
             Color = "Cyan"
         })
 
-        # Downmix tracks measured through $DownmixChain (same as encoder). Non-downmix measured as-is;
-        # swr rematrix on >6ch DTS "Encode" paths applies default clip protection, so no trim needed.
-        $measureFilter = $t.Downmix ? "$downmixChain,loudnorm=print_format=json" : "loudnorm=print_format=json"
+        # Downmix tracks measured through $DownmixChain (same as encoder). >6ch "Encode" tracks
+        # (DTS-HD/DTS-core) are measured through the SAME -ac 6 reduction Build applies (aresample
+        # to 5.1 uses identical libswresample rematrix), so input_tp reflects the 6ch encoded signal.
+        # Genuine 6ch sources are already 5.1, so they remain measured as-is.
+        $measureFilter =
+            if     ($t.Downmix)        { "$downmixChain,loudnorm=print_format=json" }
+            elseif ($t.Channels -gt 6) { "aresample=ochl=5.1,loudnorm=print_format=json" }
+            else                       { "loudnorm=print_format=json" }
 
         $raw = & $ffmpegBin -analyzeduration 200M -probesize 200M `
-               -threads $threadCount -i $inputFile `
+               -threads $threadCount -drc_scale 0 -i $inputFile `
                -map "0:$($t.RealIndex)" -filter:a $measureFilter -f null - 2>&1 `
                | ForEach-Object { "$_" }
 
@@ -712,8 +717,16 @@ function Convert-AudioTracks {
 
         if ($t.NeedsSpnScan) {
             if ($PeakResults.TryGetValue($t.RealIndex, [ref]$stats) -and $stats -and $stats.TP) {
-                $peakTP = [double]::Parse($stats.TP, [System.Globalization.CultureInfo]::InvariantCulture)
-                $gainDb = [Math]::Min(0.0, $script:TruePeakCeilingDB - $peakTP)
+                $parsedTP = 0.0
+                if ([double]::TryParse(
+                        $stats.TP,
+                        [System.Globalization.NumberStyles]::Float,
+                        [System.Globalization.CultureInfo]::InvariantCulture,
+                        [ref]$parsedTP) -and [double]::IsFinite($parsedTP)) {
+                    $peakTP = $parsedTP
+                    $gainDb = [Math]::Min(0.0, $script:TruePeakCeilingDB - $peakTP)
+                }
+                # else: non-finite/unparseable TP (e.g. "-inf"/"inf"/"nan") -> gainDb stays 0; no trim, alimiter backstops.
             }
             # else: measurement missing -> gainDb stays 0; signal passes at native level.
         }
