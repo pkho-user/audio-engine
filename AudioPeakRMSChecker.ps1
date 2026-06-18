@@ -250,24 +250,21 @@ function Get-TrackETA {
         'opus'   { 0.00350 }
         default  { 0.00365 }
     }
-    # astats+ebur128 cost tracks sample throughput (duration x channels), but the
-    # lossy-codec ratios above were tuned on stereo, so they undershoot badly on
-    # 5.1/7.1 content (e.g. AAC 7.1 ran ~4.5x over a stereo-baselined estimate).
-    # Scale those by channels-over-2; the >=1 floor keeps mono/stereo unchanged.
-    # truehd/dts ratios are already measured on multichannel material, so scaling
-    # them would double-count -- left at 1.0. Anchored to a real AAC 7.1 sample:
-    # 0.00350 x (8/2) x $LoudnessOverhead matches observed wall time within rounding.
+    # Lossy-codec ratios above were tuned on stereo and undershoot badly on 5.1/7.1
+    # (AAC 7.1 ran ~4.5x over). Scale by channels-over-2; the >=1 floor leaves
+    # mono/stereo unchanged. truehd/dts ratios are already measured on multichannel,
+    # so scaling them would double-count -- left at 1.0.
     $chScale = ($Codec -in @('truehd','dts')) ? 1.0 : [Math]::Max(1.0, $Channels / 2.0)
     return [int]($FileDuration * $ratio * $chScale * $sizeScale * $script:LoudnessOverhead)
 }
 
-# =============================================================================
-#  ebur128 Summary parsing (block-aware). 'Threshold:' appears under BOTH
-#  'Integrated loudness:' and 'Loudness range:', so the sub-block is tracked.
-#  Anchors on the last 'Summary:' line; ignores the ~10 Hz per-frame log lines.
-#  Throws [FormatException] on a present-but-non-numeric token. Returns $null
-#  if the Summary / required fields are absent.
-# =============================================================================
+# ========================================================================
+# ebur128 Summary parsing (block-aware). 'Threshold:' appears under BOTH
+# Integrated loudness: and Loudness range:, so the sub-block is tracked.
+# Anchors on the last 'Summary:' line; ignores the ~10 Hz per-frame lines.
+# Throws [FormatException] on a non-numeric token; returns $null if the
+# Summary or required fields are absent.
+# ========================================================================
 function Parse-Ebur128Summary {
     param([string[]]$Lines)
 
@@ -999,9 +996,9 @@ if ($avSync) {
     $syncColor = ($avSync.Status -eq 'OK') ? 'Green' : 'Red'
     Write-Host $avSync.Message -ForegroundColor $syncColor
     if ($avSync.Status -eq 'OK') {
-        Write-Host "  -> Safe to proceed with ConvertAudioEngine-DDP51 or ConvertAudioEngine-Keep71." -ForegroundColor Green
+        Write-Host "  -> Safe to proceed with audio processing." -ForegroundColor Green
     } else {
-        Write-Host "  -> Do NOT run ConvertAudioEngine-DDP51 or ConvertAudioEngine-Keep71 until this sync issue is fixed." -ForegroundColor Red
+        Write-Host "  -> Do NOT run until this sync issue is fixed." -ForegroundColor Red
     }
     Write-Host ""
 }
