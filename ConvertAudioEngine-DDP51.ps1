@@ -1,9 +1,9 @@
 # ========================================================================
-#  ConvertAudioEngine-DDP51 v3.0.5 — Production Use
+#  ConvertAudioEngine-DDP51 v3.1.2 — Production Use
 #  PowerShell 7.6, FFmpeg 8.1
 #
 #  Foundation: 3-phase SPN architecture (Phase A → Phase B → Phase C)
-#  Includes Safe Peak Normalizer (SPN) and malformed-layout guards.
+#  Includes SPN-TP (true-peak ceiling, attenuation-only) and malformed-layout guards.
 #
 #  Removes all 2.0 tracks (delegated to ConvertAudioEngine-Stereo)
 #
@@ -21,7 +21,7 @@
 #  Supported codecs:
 #    AAC, EAC3-ATMOS, TrueHD, DTS, PCM, FLAC
 #
-#  Priority mapping: 0–110 (Pass+Copy = highest)
+#  Priority mapping: 0–100 (EAC3 Atmos passthrough = highest)
 #
 #  Output:
 #    MKV container with video copy + DD+ 5.1 tracks
@@ -31,7 +31,7 @@
 #    ITU-R BS.775 pan matrix for 7.1 → 5.1 accuracy
 #    SL/SR folded into BL/BR at -3 dB for spatial integrity
 #    aformat=channel_layouts=7.1 ensures canonical decoder ordering
-#    alimiter (0.948) prevents post-pan clipping above -0.47 dBFS 
+#    alimiter (limit=0.948) prevents post-pan clipping above -0.47 dBFS
 # ========================================================================
 #Requires -Version 7.6
 
@@ -50,7 +50,11 @@ $ScanThrottle    = [Math]::Max(1, [int]([Environment]::ProcessorCount / $ThreadC
                         # Parallel SPN scan concurrency limit.
                         # Formula: ProcessorCount / ThreadCount (prevents CPU saturation).
                         # SSD/NVMe: safe to override up to 4. Spinning disk: keep at 1.
-$PeakThresholdDB = -0.5 # SPN: loudnorm triggers when source peak exceeds this (dBFS)
+[double]$TruePeakCeilingDB = -1.0  # SPN-TP true-peak safety ceiling (dBTP). Tracks whose
+                                   # (downmixed) measured true peak exceeds this get a
+                                   # static, attenuation-only trim back down to it.
+                                   # Gain is always clamped to <= 0 dB — we never boost.
+                                   # The alimiter backstop sits below this at ~-0.47 dBFS.
 $CommentaryPattern = [regex]::new(
     'commentary|director|producer|writer|cast|behind|bonus|alt|interview',
     'IgnoreCase,Compiled'
@@ -59,16 +63,22 @@ $CommentaryPattern = [regex]::new(
 # ========================================
 #  ENGINE: BITRATE CONFIGURATION TABLE
 #  Single source of truth — changes here propagate to rule groups, fallback, and safety clamps.
-#  Common EAC3 5.1: 384,448,512,640,768         (industry-standard streaming bitrates)
-#  Pipeline-specific: 1024,1152,1280,1408,1536  (used for DTS-HD re-encode & 7.1→5.1 downmix)
-#  You can safely adjust these numbers, within "....k"
+#  Common EAC3 5.1: 384,448,512,640,768
+#  Higher pipeline bitrates: 1024,1152,1280,1408,1536
+#  You can safely adjust these numbers, within '....k'
 # ========================================
 $BitRateConfig = @{
     Downmix51   = '1152k'   # 7.1 → 5.1 downmix via pan filter
     ReEncode51  = '768k'    # 5.1 source re-encode
     EncodeDTSHD = '1024k'   # DTS-HD MA/HRA lossless multichannel encode (5.1 and 7.1)
-    # PassCopy51 entries added in Keep71 script
 }
+
+# ========================================================================
+#  ENGINE: DOWNMIX FILTERGRAPH — SINGLE SOURCE OF TRUTH
+#  Used in lock-step by Phase-B measurement AND Build-FFmpegCommand.
+#  Any divergence means the safety trim is computed against the wrong signal.
+# ========================================================================
+$DownmixChain = 'aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR'
 
 if ($IsWindows) {
     $ffmpeg  = Join-Path $PSScriptRoot "ffmpeg.exe"
@@ -169,7 +179,8 @@ $Rules_EAC3_Atmos = @(
     [PSCustomObject]@{
         CodecRegex     = "^(eac3)$"
         Channels       = [ChannelFilter]::new("gt", 2)
-        ProfileRegex   = "JOC|Atmos"
+        ProfileRegex   = "\bJOC\b|\bAtmos\b"
+        TrustTitleProfile = $true   # ffprobe under-reports JOC/Atmos in profile; allow title/handler fallback (codec already gated to eac3)
         Action         = "Passthrough"
         Bitrate        = $null
         PassthroughTag = "EAC3_Atmos_Passthrough"
@@ -400,11 +411,16 @@ function Resolve-AudioRule {
         }
 
         if ($r.ProfileRegexObj) {
-            if (-not (
-                ($Profile -and $r.ProfileRegexObj.IsMatch($Profile)) -or
-                ($Title   -and $r.ProfileRegexObj.IsMatch($Title))   -or
-                ($Handler -and $r.ProfileRegexObj.IsMatch($Handler))
-            )) { continue }
+            # Profile field is authoritative. Container title/handler are unreliable
+            # and must NOT be allowed to promote a track into a higher tier, so they
+            # are consulted only when the rule explicitly opts in via TrustTitleProfile
+            # (currently EAC3 Atmos only).
+            $profileMatched = $Profile -and $r.ProfileRegexObj.IsMatch($Profile)
+            if (-not $profileMatched -and $r.TrustTitleProfile) {
+                $profileMatched = ($Title   -and $r.ProfileRegexObj.IsMatch($Title)) -or
+                                  ($Handler -and $r.ProfileRegexObj.IsMatch($Handler))
+            }
+            if (-not $profileMatched) { continue }
         }
 
         return $r
@@ -427,7 +443,7 @@ function New-RemovedTrack {
         Action="Removed"; Passthrough=$false; Downmix=$false
         Bitrate=$null; PassthroughTag=$null; Output="Malformed"
         Rule=$Rule; Priority=0
-        NeedsNormalization=$false; NeedsSpnScan=$false
+        NeedsSpnScan=$false
     }
 }
 
@@ -524,7 +540,7 @@ function Convert-AudioTracks {
                 Action="Removed"; Passthrough=$false; Downmix=$false
                 Bitrate=$null; PassthroughTag=$null; Output="Commentary"
                 Rule="Commentary_Removed"; Priority=0
-                NeedsNormalization=$false; NeedsSpnScan=$false
+                NeedsSpnScan=$false
             })
             $TrackIndex++; continue
         }
@@ -572,7 +588,6 @@ function Convert-AudioTracks {
             PassthroughTag=$Tag
             Output=($Action -eq "Removed" ? "2.0_Removed" : "")
             Rule=$Rule; Priority=$Priority
-            NeedsNormalization=$false
             NeedsSpnScan=($Action -ne "Passthrough" -and $Action -ne "Removed")
         })
 
@@ -580,7 +595,7 @@ function Convert-AudioTracks {
     }
 
     # -------------------------------------------------------------------
-    # PHASE B - Parallel SPN peak scans 
+    # PHASE B - Parallel SPN-TP true-peak scans
     # Parallel runspaces cannot access script scope and require explicit captures.
     # The peak scan logic is inlined because helper functions cannot run inside runspaces.
     # No Write-Host calls are allowed inside the parallel block to avoid runspace output issues.
@@ -588,7 +603,7 @@ function Convert-AudioTracks {
     # -------------------------------------------------------------------
     $spnCount = @($PendingTracks | Where-Object { $_.NeedsSpnScan }).Count
     if ($spnCount -gt 0) {
-        Write-Host "[SPN] Peak scanning $spnCount track(s) — may take a few minutes..." -ForegroundColor Cyan
+        Write-Host "[SPN] True-peak scanning $spnCount track(s) — may take a few minutes..." -ForegroundColor Cyan
     }
 
     $PeakResults = [System.Collections.Concurrent.ConcurrentDictionary[int,object]]::new()
@@ -597,52 +612,59 @@ function Convert-AudioTracks {
     $throttleLimit = $ScanThrottle  # Local capture — $using: not valid on -ThrottleLimit parameter
     $PendingTracks | Where-Object { $_.NeedsSpnScan } | ForEach-Object -Parallel {
 
-        $t           = $_
-        $ffmpegBin   = $using:ffmpeg
-        $threadCount = $using:ThreadCount
-        $threshold   = $using:PeakThresholdDB
-        $inputFile   = $using:InputFile
-        $peakDict    = $using:PeakResults
-        $outputBag   = $using:ScanOutput
+        $t            = $_
+        $ffmpegBin    = $using:ffmpeg
+        $threadCount  = $using:ThreadCount
+        $inputFile    = $using:InputFile
+        $peakDict     = $using:PeakResults
+        $outputBag    = $using:ScanOutput
+        $downmixChain = $using:DownmixChain
 
         $label    = "Track $($t.RealIndex) ($($t.Codec), $($t.Channels)ch)"
         $messages = [System.Collections.Generic.List[object]]::new()
         # Per-track message intentional — provides feedback during long individual scans.
         $messages.Add([PSCustomObject]@{
-            Text  = "[SPN] Scanning peak: $label - may take a few minutes..."
+            Text  = "[SPN] Measuring true peak: $label - may take a few minutes..."
             Color = "Cyan"
         })
 
+        # Downmix tracks measured through $DownmixChain (same as encoder), so input_tp reflects
+        # the 5.1 output peak, not the 7.1 source. >6ch "Encode" tracks (e.g. DTS-HD MA/HRA 7.1)
+        # are ALSO downmixed to 5.1 in Build via the same $DownmixChain, so they must be measured
+        # through it too — otherwise input_tp would reflect the 7.1 source, not the encoded 5.1
+        # signal, and the static true-peak trim would be computed against the wrong signal.
+        # 6ch Encode tracks are encoded as-is (no rematrix) and are measured as-is.
+        $measureFilter = ($t.Downmix -or $t.Channels -gt 6) ? "$downmixChain,loudnorm=print_format=json" : "loudnorm=print_format=json"
+
         $raw = & $ffmpegBin -analyzeduration 200M -probesize 200M `
                -threads $threadCount -i $inputFile `
-               -map "0:$($t.RealIndex)" -filter:a volumedetect -f null - 2>&1 `
+               -map "0:$($t.RealIndex)" -filter:a $measureFilter -f null - 2>&1 `
                | ForEach-Object { "$_" }
 
-        $peak = $null
-        foreach ($line in $raw) {
-            if ($line -match 'max_volume:\s*([-\d.]+)\s*dB') {
-                $peak = [double]$Matches[1]; break
-            }
-        }
+        $rawText = $raw -join "`n"
 
-        if ($null -ne $peak -and $peak -gt $threshold) {
+        $i_val  = if ($rawText -match '"input_i"\s*:\s*"([^"]+)"')  { $Matches[1] } else { $null }
+        $tp_val = if ($rawText -match '"input_tp"\s*:\s*"([^"]+)"') { $Matches[1] } else { $null }
+
+        if ($tp_val) {
+            $stats = [PSCustomObject]@{
+                I  = $i_val
+                TP = $tp_val
+            }
+            [void]$peakDict.TryAdd($t.RealIndex, $stats)
+
             $messages.Add([PSCustomObject]@{
-                Text  = "[SPN] $label - Peak: $peak dBFS - normalization will be applied"
-                Color = "Yellow"
-            })
-        } elseif ($null -ne $peak) {
-            $messages.Add([PSCustomObject]@{
-                Text  = "[SPN] $label - Peak: $peak dBFS - within threshold, skipping normalization"
+                Text  = "[SPN] $label - Measured true peak: $tp_val dBTP (integrated $i_val LUFS)"
                 Color = "Green"
             })
         } else {
+            # Measurement failed — gainDb stays 0 (no trim). Never boosts; alimiter backstops.
             $messages.Add([PSCustomObject]@{
-                Text  = "[SPN] $label - Peak detection failed, skipping normalization"
+                Text  = "[SPN] $label - True-peak detection failed - no static trim, alimiter will backstop"
                 Color = "Red"
             })
         }
 
-        [void]$peakDict.TryAdd($t.RealIndex, $peak)
         [void]$outputBag.Add([PSCustomObject]@{
             RealIndex = $t.RealIndex
             Messages  = $messages
@@ -658,15 +680,32 @@ function Convert-AudioTracks {
     }
 
     # -------------------------------------------------------------------
-    # PHASE C - Sequential merge
-    # NeedsNormalization resolved from $PeakResults via TryGetValue.
-    # NeedsSpnScan is internal scaffolding - stripped from $Processed output.
+    # PHASE C - Sequential merge + deterministic true-peak safety decision
     # -------------------------------------------------------------------
+    # gainDb = min(0, ceiling - measured_tp) — attenuate-only; never boosts.
+    # input_tp parsed with InvariantCulture (loudnorm JSON always uses '.'; comma-decimal locales would mis-read it).
     foreach ($t in $PendingTracks) {
+        $stats   = $null
+        $peakTP  = $null
+        $gainDb  = 0.0
+
         if ($t.NeedsSpnScan) {
-            $peakVal = $null
-            [void]$PeakResults.TryGetValue($t.RealIndex, [ref]$peakVal)
-            $t.NeedsNormalization = ($null -ne $peakVal -and $peakVal -gt $PeakThresholdDB)
+            if ($PeakResults.TryGetValue($t.RealIndex, [ref]$stats) -and $stats -and $stats.TP) {
+                # loudnorm can emit non-finite tokens (e.g. "-inf" on digital silence).
+                # TryParse + IsFinite never throws; on any unparseable/non-finite value we
+                # leave $peakTP = $null and $gainDb = 0.0 (no trim) — attenuate-only model
+                # preserved, alimiter backstops. Never boosts.
+                [double]$tpParsed = 0.0
+                if ([double]::TryParse($stats.TP,
+                        [System.Globalization.NumberStyles]::Float,
+                        [System.Globalization.CultureInfo]::InvariantCulture,
+                        [ref]$tpParsed) -and [double]::IsFinite($tpParsed)) {
+                    $peakTP = $tpParsed
+                    $gainDb = [Math]::Min(0.0, $script:TruePeakCeilingDB - $peakTP)
+                }
+                # else: non-finite/unparseable TP -> no trim (degrade safely).
+            }
+            # else: measurement missing -> gainDb stays 0; signal passes at native level.
         }
 
         $Processed.Add([PSCustomObject]@{
@@ -674,7 +713,10 @@ function Convert-AudioTracks {
             Profile=$t.Profile; Title=$t.Title; Language=$t.Language; Action=$t.Action
             Passthrough=$t.Passthrough; Downmix=$t.Downmix; Bitrate=$t.Bitrate
             PassthroughTag=$t.PassthroughTag; Output=$t.Output; Rule=$t.Rule
-            Priority=$t.Priority; NeedsNormalization=$t.NeedsNormalization
+            Priority=$t.Priority
+            MeasuredTP=$peakTP
+            PeakSafetyGainDb=$gainDb
+            NeedsPeakSafety=($gainDb -lt 0.0)
         })
     }
 
@@ -693,7 +735,6 @@ function Build-FFmpegCommand {
     )
 
     $ffArgs   = [System.Collections.Generic.List[string]]::new()
-    $loudnorm = "loudnorm=I=-23:TP=-1.5:LRA=11"  # SPN: applied only when NeedsNormalization=$true
 
     # ------------------------------------------------------------------
     #  Global options
@@ -724,6 +765,15 @@ function Build-FFmpegCommand {
         if ($t.Action -eq "Removed") { continue }
 
         $ffArgs.AddRange([string[]]("-map", "0:$($t.RealIndex)"))
+
+        # Static attenuation-only trim (always <= 0 dB). InvariantCulture prevents a comma-decimal
+        # locale from producing an unparseable "volume=-0,7dB". Emitted only when a trim is needed.
+        $volTrim = ""
+        if ($t.NeedsPeakSafety) {
+            $g = $t.PeakSafetyGainDb.ToString('0.0##', [System.Globalization.CultureInfo]::InvariantCulture)
+            $volTrim = "volume=${g}dB"
+        }
+
         $LangTag = " [$($t.Language)]"
 
         if ($t.Passthrough) {
@@ -735,15 +785,19 @@ function Build-FFmpegCommand {
         }
         elseif ($t.Downmix) {
             # --- 7.1 → 5.1 DOWNMIX PATH ---
-            # Downmixes 7.1 audio to EAC3 using ITU-R BS.775 matrix
-            # Side (SL/SR) are folded into the rear (BL/BR) with -3 dB attenuation
-            # alimiter catches post-pan peaks exceeding -0.47 dBFS (attack=5ms, release=50ms)
-            $pre       = $t.NeedsNormalization ? "$loudnorm," : ""
-            $panFilter = "${pre}aformat=channel_layouts=7.1,pan=5.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL+0.707*SL|BR=BR+0.707*SR,alimiter=limit=0.948:attack=5:release=50:level=false:latency=1"
+            # $DownmixChain is the SAME aformat+pan (ITU-R BS.775; SL/SR folded into
+            # BL/BR at -3 dB) used by the Phase-B measurement, so the trim below is
+            # computed from this exact signal. Order is:
+            #   downmix (pan) -> static true-peak trim (if any) -> alimiter.
+            # The trim sits AFTER the pan because side->rear summation is what can push
+            # the peak up; the alimiter is the final sample-peak backstop (~-0.47 dBFS).
+            $post      = $t.NeedsPeakSafety ? ",$volTrim" : ""
+            $panFilter = "$($script:DownmixChain)${post},alimiter=limit=0.948:attack=5:release=50:level=false:latency=1"
 
             $ffArgs.AddRange([string[]](
                 "-filter:a:$i",     $panFilter,
                 "-c:a:$i",          "eac3",
+                "-ar",              "48000",
                 "-b:a:$i",          $t.Bitrate,
                 "-dialnorm",        "-31",
                 "-cutoff",          "20000",
@@ -753,20 +807,44 @@ function Build-FFmpegCommand {
         }
         else {
             # --- 5.1 RE-ENCODE PATH ---
-            # Re-encodes 5.1 input to EAC3 (DD+ 5.1). 6.1 input (DTS 7ch
-            # after Safety Audit) also routes here — downmixed to 5.1 via -ac 6.
-            # Dolby DRC is disabled. Loudness signaling handled by -dialnorm -31.
-            if ($t.NeedsNormalization) {
-                $ffArgs.AddRange([string[]]("-filter:a:$i", $loudnorm))
+            # 6ch (5.1) input is encoded as-is. >6ch input (e.g. DTS-HD MA/HRA 7.1) is
+            # downmixed to 5.1 through the SAME $DownmixChain + alimiter that Phase-B
+            # measures, so the static true-peak trim is computed from the exact encoded
+            # signal and the -1.0 dBTP ceiling is enforced. Dolby DRC is disabled; level
+            # signaling is left at -dialnorm -31 (no shift).
+            if ($t.Channels -gt 6) {
+                # 7.1 -> 5.1 downmix: pan (ITU-R BS.775) -> static trim (if any) -> alimiter,
+                # byte-identical to the $DownmixChain measured in Phase-B. No -ac needed (pan
+                # already outputs 5.1). The alimiter is the sample-peak backstop for the
+                # side->rear summation introduced by the fold.
+                $post      = $t.NeedsPeakSafety ? ",$volTrim" : ""
+                $panFilter = "$($script:DownmixChain)${post},alimiter=limit=0.948:attack=5:release=50:level=false:latency=1"
+                $ffArgs.AddRange([string[]](
+                    "-filter:a:$i",     $panFilter,
+                    "-c:a:$i",          "eac3",
+                    "-ar",              "48000",
+                    "-b:a:$i",          $t.Bitrate,
+                    "-dialnorm",        "-31",
+                    "-cutoff",          "20000",
+                    "-metadata:s:a:$i", "title=DD+ 5.1 ($($t.Bitrate))$LangTag"
+                ))
             }
-            $ffArgs.AddRange([string[]](
-                "-c:a:$i",          "eac3",
-                "-ac",              "6",
-                "-b:a:$i",          $t.Bitrate,
-                "-dialnorm",        "-31",
-                "-cutoff",          "20000",
-                "-metadata:s:a:$i", "title=DD+ 5.1 ($($t.Bitrate))$LangTag"
-            ))
+            else {
+                # 5.1 source re-encode (no channel summation): static trim alone guarantees
+                # the true-peak ceiling, so no limiter is needed on this path.
+                if ($t.NeedsPeakSafety) {
+                    $ffArgs.AddRange([string[]]("-filter:a:$i", $volTrim))
+                }
+                $ffArgs.AddRange([string[]](
+                    "-c:a:$i",          "eac3",
+                    "-ac",              "6",
+                    "-ar",              "48000",
+                    "-b:a:$i",          $t.Bitrate,
+                    "-dialnorm",        "-31",
+                    "-cutoff",          "20000",
+                    "-metadata:s:a:$i", "title=DD+ 5.1 ($($t.Bitrate))$LangTag"
+                ))
+            }
             $t.Output = "DD+ 5.1 ($($t.Bitrate))$LangTag"
         }
 
