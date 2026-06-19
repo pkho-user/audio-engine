@@ -30,8 +30,8 @@ Designed for home theater users who want clean, consistent audio without writing
 | **ConvertAudioEngine-Keep71.ps1** | Preserves the original 7.1 source track and adds a DDP 5.1 compatibility track |
 | **ConvertAudio2-DDP51.ps1** | Single track DDP 5.1 output, selecting the best audio per language, removing 2.0 tracks, downmixing 7.1/Atmos, and re‑encoding or passing through 5.1 |
 | **ConvertAudio2-Stereo.ps1** | Converts any 7.1, Atmos, 5.1, or 2.0 track to a high quality EAC3 or Opus stereo file, downmixing or re‑encoding depending on the source |
-| **AudioRemove-AC3.ps1** | Removes low‑bitrate AC3/E‑AC3 streams using **FFmpeg** |
-| **AudioRemove-AC3-mkvmerge.ps1** | Removes low bit-rate AC3/E-AC3 streams using **mkvmerge** (MKVToolNix 98.0+) |
+| **AudioRemove-AC3.ps1** | Removes all AC3/E‑AC3 streams using **FFmpeg** |
+| **AudioRemove-AC3-mkvmerge.ps1** | Removes all AC3/E-AC3 streams using **mkvmerge** (MKVToolNix 98.0+) |
 | **AudioPeakRMSChecker.ps1** | Validates peak, RMS, crest factor, and clipping on source and converted tracks |
 
 ### Windows11
@@ -139,10 +139,9 @@ It delivers solid surround quality without huge file sizes, making it a reliable
 
 You can tweak these settings directly in the script:
 
-- **`CommentaryKeywords`** — Add or remove words that trigger commentary track removal.
+- **Commentary keywords** — Add or remove words that trigger commentary track removal.
 - **Audio rule groups** (`$Rules_AAC`, `$Rules_DTS`, etc.) — Adjust bitrates, add new codecs, or change behavior per codec family.
 - **`ThreadCount`** — Performance tuning. Defaults to 8 threads. Adjustable from **4 to 16**.
-- **`ScanThrottle`** — Limits how many peak-scan tasks run simultaneously. Recommended values: **1 to 4**. Use 1 for Hard Drives, up to 4 for SSD/NVMe.
 
 ---
 
