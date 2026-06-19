@@ -141,7 +141,7 @@ You can tweak these settings directly in the script:
 
 - **Commentary keywords** — Add or remove words that trigger commentary track removal.
 - **Audio rule groups** (`$Rules_AAC`, `$Rules_DTS`, etc.) — Adjust bitrates, add new codecs, or change behavior per codec family.
-- **`ThreadCount`** — Performance tuning. Defaults to 8 threads. Adjustable from **4 to 16**.
+- **ThreadCount** — Performance tuning. Defaults to 8 threads. Adjustable from **4 to 16**.
 
 ---
 
