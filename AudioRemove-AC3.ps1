@@ -1,5 +1,6 @@
 # ============================================================
-# Script     : AudioRemove-AC3.ps1 — (Version 3.7)
+# Script     : AudioRemove-AC3.ps1 — (Version 3.8)
+# Compatible : PS 7.6.1 | Uses only FFmpeg 8.1
 # Overview   : Pure remux (no re-encode).
 #
 # Purpose    : Remove all AC3 and E-AC3 audio streams (typically low-bitrate).
@@ -19,7 +20,6 @@
 #              Will NOT overwrite existing files.
 #
 # Utility for: Conversion Engines (DDP51.ps1 / Keep71.ps1)
-# Compatible : PS 7.6.1 | FFmpeg 8.1
 # ============================================================
 #Requires -Version 7.6
 
@@ -44,7 +44,7 @@ $ErrorActionPreference = 'Stop'
 $banner = @"
 
 ────────────────────────────────────────────────────────────
- AudioRemove-AC3 v3.7
+ AudioRemove-AC3 v3.8
  Pure remux: strips AC3/E-AC3 audio via FFmpeg
 ────────────────────────────────────────────────────────────
 "@
@@ -321,15 +321,18 @@ function New-MapArgs {
 # stream N" because both flags target a:0 at the same time.
 #
 # This helper produces one instruction per kept audio stream — no overlaps.
-#   a:0  >> default   (first kept audio is the default playback track)
-#   a:1+ >> 0         (clears disposition flags; '0' is the documented clear value)
+# It manages ONLY the 'default' bit; under -c copy the documented base value is
+# "all flags copied from input", so +/- updates that base and PRESERVES other
+# source dispositions (commentary, hearing_impaired, original, dub, ...).
+#   a:0  >> +default   (first kept audio becomes the default playback track)
+#   a:1+ >> -default   (clears ONLY the default bit; other flags retained)
 function New-AudioDispositionArgs {
     param([int]$Count)
 
     $dispArgs = [System.Collections.Generic.List[string]]::new()
     for ($j = 0; $j -lt $Count; $j++) {
         $dispArgs.Add("-disposition:a:$j")
-        $dispArgs.Add(($j -eq 0) ? 'default' : '0')
+        $dispArgs.Add(($j -eq 0) ? '+default' : '-default')
     }
     return $dispArgs.ToArray()
 }
@@ -382,7 +385,6 @@ $ffArgs = @(
     '-stats_period',     '0.2'              # progress update cadence (default 0.5s) → smoother bar
     '-probesize',        '200M'
     '-analyzeduration',  '200M'
-    '-fflags',           '+discardcorrupt'  # discard corrupt packets instead of aborting
     '-i',                $fullInput
     '-avoid_negative_ts','make_zero'        # clamp negative PTS from source container
     '-map_metadata',     '0'                # directly carry over container metadata

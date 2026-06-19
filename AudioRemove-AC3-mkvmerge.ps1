@@ -1,5 +1,5 @@
 # ============================================================
-# Script     : AudioRemove-AC3-mkvmerge.ps1 — (Version 1.0.6)
+# Script     : AudioRemove-AC3-mkvmerge.ps1 — (Version 1.0.7)
 # Compatible : PS 7.6.1 | MKVToolNix 98.0+, uses only mkvmerge.exe
 # Overview   : Pure remux via mkvmerge (no re-encode, byte-identical audio).
 #
@@ -34,7 +34,7 @@ param(
 )
 
 # Enable strict mode; halt on any error.
-Set-StrictMode -Version Latest
+Set-StrictMode -Version 3.0
 $ErrorActionPreference = 'Stop'
 
 # ==============================
@@ -43,7 +43,7 @@ $ErrorActionPreference = 'Stop'
 $banner = @"
 
 ────────────────────────────────────────────────────────────
- AudioRemove-AC3-mkvmerge v1.0.6
+ AudioRemove-AC3-mkvmerge v1.0.7
  Pure remux: strips AC3/E-AC3 audio via mkvmerge
 ────────────────────────────────────────────────────────────
 "@
@@ -236,26 +236,29 @@ $probe = Get-MkvJson -File $fullInput -MkvMergePath $mkvmerge
 # versions and language packs.
 
 # AC3 family definition (Matroska CodecIDs)
-$AC3Codecs = @('A_AC3', 'A_EAC3')
+# Matched by prefix so legacy/variant IDs are also caught:
+#   A_AC3, A_AC3/BSID9, A_AC3/BSID10  -> Dolby Digital
+#   A_EAC3                            -> Dolby Digital Plus
+$AC3Pattern = '^A_E?AC3'
 
 $Tracks = @(
-    $probe.tracks | ForEach-Object {
+    (Get-PropSafe $probe 'tracks') | ForEach-Object {
         $props    = Get-PropSafe $_ 'properties'
         $rawLang  = Get-PropSafe $props 'language'
         $lang     = ($rawLang -is [string] -and $rawLang.Trim().Length -gt 0) ? $rawLang.Trim().ToLower() : $null
         $codecId  = Get-PropSafe $props 'codec_id'
         $title    = Get-PropSafe $props 'track_name'
-        $type     = $_.type
-        $codec    = $_.codec
+        $type     = Get-PropSafe $_ 'type'
+        $codec    = Get-PropSafe $_ 'codec'
 
         [pscustomobject]@{
-            Id         = [int]$_.id
+            Id         = [int](Get-PropSafe $_ 'id')
             Type       = $type
             Codec      = $codec
             CodecId    = $codecId
             Language   = $lang
             Title      = $title
-            IsAC3      = ($type -eq 'audio'     -and $codecId -in $AC3Codecs)
+            IsAC3      = ($type -eq 'audio'     -and $codecId -match $AC3Pattern)
             IsAudio    = ($type -eq 'audio')
             IsVideo    = ($type -eq 'video')
             IsSubtitle = ($type -eq 'subtitles')
@@ -325,7 +328,10 @@ if ($selectedSubs.Count -gt 0 -and $SubtitleInfo -eq 'Enable') {
 # ENGINE: Build mkvmerge args
 # -----------------------
 # Notes:
-#   --no-date        : prevents segment date drift across runs (Stage 5 determinism)
+#   --no-date        : omits the segment date field only. NOT full determinism:
+#                      audio/video payload is copied verbatim, but mkvmerge still
+#                      rewrites track-statistics tags. Use --deterministic <seed>
+#                      if byte-identical reruns are actually required.
 #   --audio-tracks   : explicit kept TIDs (per-file option; precedes input file)
 #   --subtitle-tracks: explicit kept TIDs; falls back to -S when none selected
 #   --track-order    : preserves source order minus removed AC3
