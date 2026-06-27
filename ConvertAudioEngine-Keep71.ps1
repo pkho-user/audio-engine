@@ -1,5 +1,5 @@
 # ==================================================================
-#  ConvertAudioEngine-Keep71 v3.1.2 — Production Use
+#  ConvertAudioEngine-Keep71 v3.2.0 — Production Use
 #  PowerShell 7.6, FFmpeg 8.1
 #
 #  Foundation: 3-phase SPN architecture (Phase A → Phase B → Phase C)
@@ -630,7 +630,7 @@ function Convert-AudioTracks {
 
     if ($tracksToScan.Count -gt 0) {
 
-        Write-Host "[SPN] True-peak scanning $($tracksToScan.Count) track(s) — may take a few minutes..." -ForegroundColor Cyan
+        Write-Host "[SPN] True-peak scanning $($tracksToScan.Count) track(s) - may take upto 12 minutes..." -ForegroundColor Cyan
 
         $spnResults     = [System.Collections.Concurrent.ConcurrentDictionary[int,object]]::new()
 
@@ -641,7 +641,7 @@ function Convert-AudioTracks {
         $downmixChain = $script:DownmixChain
         $scanThrottle = $script:ScanThrottle
 
-        $tracksToScan | ForEach-Object -Parallel {
+        $scanJob = $tracksToScan | ForEach-Object -Parallel {
             $idx      = $_.RealIndex
             $codec    = $_.Codec
             $channels = $_.Channels
@@ -688,7 +688,19 @@ function Convert-AudioTracks {
                 TP  = $tp_val
                 Log = $log.ToArray()
             })
-        } -ThrottleLimit $scanThrottle
+        } -ThrottleLimit $scanThrottle -AsJob
+
+        $spnCount = $tracksToScan.Count
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($scanJob.State -notin @('Completed','Failed','Stopped')) {
+            Write-Host -NoNewline ("`r  [Timer] {0} [SPN] Scanning... {1}/{2} complete   " -f $sw.Elapsed.ToString('mm\:ss'), $spnResults.Count, $spnCount) -ForegroundColor Yellow
+            Start-Sleep -Milliseconds 120
+        }
+        Write-Host -NoNewline ("`r" + (' ' * 60) + "`r")
+        $scanJob | Wait-Job | Out-Null
+        $scanJob | Receive-Job -ErrorAction SilentlyContinue -ErrorVariable scanErrors 6>$null | Out-Null
+        $scanJob | Remove-Job -Force
+        foreach ($e in $scanErrors) { Write-Host "[SPN] $e" -ForegroundColor Red }
 
         # ── Phase C: Sequential merge — messages printed in RealIndex order ──
         foreach ($t in $Processed) {
@@ -883,6 +895,9 @@ $tracks = Convert-AudioTracks -Streams $streams
 
 Write-Host "=== Building FFmpeg Command ===" -ForegroundColor Cyan
 $cmd = Build-FFmpegCommand -Tracks $tracks -InputFile $InputFile -ThreadCount $ThreadCount
+
+# Per-file header
+Write-Host ([System.IO.Path]::GetFileName($InputFile)) -ForegroundColor Cyan
 
 & $ffmpeg @cmd
 if ($LASTEXITCODE -ne 0) {
